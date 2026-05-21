@@ -102,8 +102,12 @@ class PatchGui(tk.Tk):
         self.kr_path = tk.StringVar(value=default_kr_root())
         self.tw_path = tk.StringVar(value=default_tw_root())
         self.display_mode = tk.StringVar(value=DISPLAY_UNCHANGED)
-        self.width_value = tk.StringVar(value="")
-        self.height_value = tk.StringVar(value="")
+        screen_width = self.winfo_screenwidth()
+        screen_height = self.winfo_screenheight()
+        self.resolution_presets = core.available_4_3_resolutions(screen_width, screen_height)
+        self.resolution_value = tk.StringVar(
+            value=core.resolution_label(core.default_4_3_resolution(screen_width, screen_height))
+        )
         self.launch_after_apply = tk.BooleanVar(value=False)
         self.status_text = tk.StringVar(value="대기 중")
 
@@ -145,11 +149,17 @@ class PatchGui(tk.Tk):
             width=14,
         )
         display.pack(side=LEFT, padx=(8, 16))
+        display.bind("<<ComboboxSelected>>", lambda _event: self._sync_resolution_state())
 
         ttk.Label(options, text="해상도").pack(side=LEFT)
-        ttk.Entry(options, textvariable=self.width_value, width=7).pack(side=LEFT, padx=(8, 4))
-        ttk.Label(options, text="x").pack(side=LEFT)
-        ttk.Entry(options, textvariable=self.height_value, width=7).pack(side=LEFT, padx=(4, 16))
+        self.resolution_combo = ttk.Combobox(
+            options,
+            textvariable=self.resolution_value,
+            values=[core.resolution_label(item) for item in self.resolution_presets],
+            state="disabled",
+            width=12,
+        )
+        self.resolution_combo.pack(side=LEFT, padx=(8, 16))
         ttk.Checkbutton(options, text="적용 후 게임 실행", variable=self.launch_after_apply).pack(side=LEFT)
 
         buttons = ttk.Frame(root)
@@ -180,6 +190,7 @@ class PatchGui(tk.Tk):
         else:
             self._log("Steam판 폴더를 자동으로 찾지 못했습니다. Steam 대만판 폴더를 직접 선택해 주세요.")
         self._log("한국어판 폴더는 사용자가 보유한 정식 한국어판 경로를 직접 선택해야 합니다.")
+        self._log("창모드 해상도는 현재 모니터 해상도 이하의 4:3 프리셋만 선택할 수 있습니다.")
 
     def _path_row(self, parent: ttk.Frame, label: str, variable: tk.StringVar, command) -> None:
         row = ttk.Frame(parent)
@@ -210,6 +221,21 @@ class PatchGui(tk.Tk):
             return "fullscreen"
         return None
 
+    def _sync_resolution_state(self) -> None:
+        state = "readonly" if self.display_mode.get() == DISPLAY_WINDOWED else "disabled"
+        self.resolution_combo.configure(state=state)
+
+    def _resolution_args(self) -> tuple[int | None, int | None]:
+        if self._display_mode_arg() != "windowed":
+            return None, None
+        try:
+            width, height = core.parse_resolution_label(self.resolution_value.get())
+        except ValueError as exc:
+            raise ValueError("해상도는 목록에 있는 4:3 프리셋만 선택할 수 있습니다.") from exc
+        if (width, height) not in self.resolution_presets:
+            raise ValueError("현재 모니터 해상도 이하의 4:3 프리셋만 선택할 수 있습니다.")
+        return width, height
+
     def _int_or_none(self, value: str, name: str) -> int | None:
         value = value.strip()
         if not value:
@@ -239,8 +265,7 @@ class PatchGui(tk.Tk):
     ) -> argparse.Namespace:
         kr_root = self._path_from_entry(self.kr_path, "한국어판 폴더", required=require_kr)
         tw_root = self._path_from_entry(self.tw_path, "Steam 대만판 폴더", required=True)
-        width = self._int_or_none(self.width_value.get(), "가로 해상도")
-        height = self._int_or_none(self.height_value.get(), "세로 해상도")
+        width, height = self._resolution_args()
         return make_args(
             kr_root,
             tw_root,

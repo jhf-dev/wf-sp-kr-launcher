@@ -9,6 +9,7 @@ files, and patches the Win10 locale shim ``wind.dll`` from CP936 to CP949.
 from __future__ import annotations
 
 import argparse
+import ctypes
 import dataclasses
 import hashlib
 import json
@@ -77,6 +78,21 @@ WINDSP_REGISTRY_KEY = "WindSP"
 
 DDRAW_RUNTIME_FILES = ("ddraw.dll", "wftsp_ddraw.ini")
 DDRAW_CONFIG_SECTION = "wftsp_ddraw"
+STANDARD_4_3_RESOLUTIONS: tuple[tuple[int, int], ...] = (
+    (640, 480),
+    (800, 600),
+    (1024, 768),
+    (1152, 864),
+    (1280, 960),
+    (1400, 1050),
+    (1440, 1080),
+    (1600, 1200),
+    (1920, 1440),
+    (2048, 1536),
+    (2560, 1920),
+    (3200, 2400),
+    (3840, 2880),
+)
 
 
 @dataclasses.dataclass(frozen=True)
@@ -435,15 +451,74 @@ def normalize_display_config(
         raise SystemExit("--width/--height require --display-mode")
     if display_mode not in {"fullscreen", "windowed", "borderless"}:
         raise SystemExit(f"unsupported display mode: {display_mode}")
+    if display_mode == "windowed":
+        width, height = normalize_windowed_resolution(width, height)
+    elif width is not None or height is not None:
+        raise SystemExit("--width/--height are only supported with --display-mode windowed")
+    else:
+        width, height = (640, 480)
     return {
         "mode": display_mode,
-        "width": width if width is not None else 640,
-        "height": height if height is not None else 480,
+        "width": width,
+        "height": height,
         "debug": 0,
         "input_fix": 1,
         "audio_focus_fix": 1,
         "inactive_window_spoof": 1,
     }
+
+
+def current_monitor_size() -> tuple[int, int]:
+    try:
+        user32 = ctypes.windll.user32
+        return int(user32.GetSystemMetrics(0)), int(user32.GetSystemMetrics(1))
+    except Exception:
+        return (640, 480)
+
+
+def available_4_3_resolutions(
+    max_width: int | None = None,
+    max_height: int | None = None,
+) -> list[tuple[int, int]]:
+    if max_width is None or max_height is None:
+        max_width, max_height = current_monitor_size()
+    available = [
+        (width, height)
+        for width, height in STANDARD_4_3_RESOLUTIONS
+        if width <= max_width and height <= max_height
+    ]
+    return available or [(640, 480)]
+
+
+def default_4_3_resolution(
+    max_width: int | None = None,
+    max_height: int | None = None,
+) -> tuple[int, int]:
+    available = available_4_3_resolutions(max_width, max_height)
+    return (1024, 768) if (1024, 768) in available else available[-1]
+
+
+def resolution_label(resolution: tuple[int, int]) -> str:
+    return f"{resolution[0]} x {resolution[1]}"
+
+
+def parse_resolution_label(value: str) -> tuple[int, int]:
+    parts = value.lower().replace(" ", "").split("x", 1)
+    if len(parts) != 2:
+        raise ValueError(f"unsupported resolution preset: {value}")
+    return int(parts[0]), int(parts[1])
+
+
+def normalize_windowed_resolution(width: int | None, height: int | None) -> tuple[int, int]:
+    if width is None and height is None:
+        return default_4_3_resolution()
+    if width is None or height is None:
+        raise SystemExit("windowed mode requires both --width and --height")
+    resolution = (width, height)
+    if resolution not in available_4_3_resolutions():
+        allowed = ", ".join(resolution_label(item) for item in available_4_3_resolutions())
+        raise SystemExit(f"windowed resolution must be a 4:3 preset no larger than the current monitor: {allowed}")
+    return resolution
 
 
 def render_ddraw_config(config: dict[str, int | str]) -> bytes:
@@ -768,8 +843,8 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
         choices=["fullscreen", "windowed", "borderless"],
         help="install DirectDraw runtime mode before launch/apply",
     )
-    parser.add_argument("--width", type=int, help="windowed DirectDraw output width")
-    parser.add_argument("--height", type=int, help="windowed DirectDraw output height")
+    parser.add_argument("--width", type=int, help="windowed 4:3 preset width")
+    parser.add_argument("--height", type=int, help="windowed 4:3 preset height")
     parser.add_argument("--dry-run", action="store_true", help="report changes without writing files")
 
 

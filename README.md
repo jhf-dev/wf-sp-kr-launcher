@@ -49,11 +49,11 @@ Steam Win10 실행 파일은 `WindConfig`의 레지스트리 해상도 값을 �
 
 지원 상태:
 
-- `창모드`: 640x480 게임 화면을 지정한 창 크기로 스케일링합니다.
-- `전체 창 모드`: 현재 모니터 크기에 맞춘 borderless 창으로 전환합니다.
+- `창모드`: 현재 모니터 해상도 이하의 4:3 프리셋 창 크기로 스케일링합니다.
+- `전체 창 모드`: 현재 모니터 크기에 맞춘 borderless 창으로 전환하고, 게임 화면은 중앙 4:3 영역에 출력합니다. 남는 좌우 영역은 pillarbox로 비워 둡니다.
 - `전체화면`: 프록시는 로드되지만 원본 DirectDraw 전체화면 경로를 그대로 통과시킵니다.
 
-창모드/전체 창 모드에서는 원본 게임의 640x480 좌표계를 유지하기 위해 `SetCursorPos`/`ClipCursor`는 실제 창 좌표로 확장하고, WndProc 마우스 입력은 640x480 논리 좌표로 되돌립니다. 또한 포커스 복귀 직후 MCI BGM이 처음부터 다시 재생되는 경우를 줄이기 위해 짧은 resume 보정을 적용합니다.
+창모드/전체 창 모드에서는 원본 게임의 640x480 좌표계를 유지하기 위해 렌더링과 입력 기준을 항상 중앙 4:3 게임 영역으로 제한합니다. `SetCursorPos`/`ClipCursor`는 실제 창 좌표로 확장하고, WndProc 마우스 입력은 640x480 논리 좌표로 되돌립니다. 창모드에서는 원본의 전체 화면 커서 제한을 해제해 타이틀바 이동과 닫기 버튼 접근이 가능하도록 합니다. 또한 포커스 복귀 직후 MCI BGM이 처음부터 다시 재생되는 경우를 줄이기 위해 짧은 resume 보정을 적용합니다.
 
 창모드/전체 창 모드에서는 원본 exclusive fullscreen용 비활성화 처리도 막습니다. 이 처리는 포커스 이탈 시 자동 최소화와 BGM 재시작을 유발하므로 창 모드에서만 우회하고, 원본 전체화면에서는 그대로 둡니다.
 
@@ -128,7 +128,7 @@ python tooling\wftsp_steam_kr_launcher.py launch-win10 --no-apply --tw-root <TW�
 해상도 지정 후 실행:
 
 ```powershell
-python tooling\wftsp_steam_kr_launcher.py launch-win10 --no-apply --tw-root <TW폴더> --display-mode windowed --width 1280 --height 720
+python tooling\wftsp_steam_kr_launcher.py launch-win10 --no-apply --tw-root <TW폴더> --display-mode windowed --width 1024 --height 768
 ```
 
 전체 창 모드 실행:

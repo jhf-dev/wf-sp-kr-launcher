@@ -115,18 +115,26 @@ Supported through `payload/ddraw.dll` plus `wftsp_ddraw.ini`:
 - `--height <pixels>`
 
 `windowed` and `borderless` force `DDSCL_NORMAL`, skip `SetDisplayMode`, adjust
-the game window style, and scale the original 640x480 blits into the target
-client area. `BltFast` scales from its source rectangle size, while `Blt` scales
-the destination rectangle itself to preserve UI partial-update semantics. The
-proxy also forces non-primary 640x480 offscreen surfaces to RGB565 16bpp in
-scaled modes, because the game locks those surfaces and writes `ushort` pixels
-directly after checking the surface `RBitMask`. `fullscreen` keeps the proxy
-installed but passes the original DirectDraw exclusive path through.
+the game window style, and scale the original 640x480 blits into a 4:3 game
+area. Windowed mode only accepts fixed 4:3 presets no larger than the current
+monitor. Borderless mode keeps a monitor-sized borderless window but centers the
+game in a 4:3 area, clearing the remaining side/top/bottom regions with black
+color-fill so they behave as pillarbox space instead of stale primary-surface
+contents.
+`BltFast` scales from its source rectangle size, while `Blt` scales the
+destination rectangle itself to preserve UI partial-update semantics. The proxy
+also forces non-primary 640x480 offscreen surfaces to RGB565 16bpp in scaled
+modes, because the game locks those surfaces and writes `ushort` pixels directly
+after checking the surface `RBitMask`. `fullscreen` keeps the proxy installed
+but passes the original DirectDraw exclusive path through.
 
 The game imports `SetCursorPos` and `ClipCursor` directly from `USER32.dll` and
 uses 640x480 fullscreen-style coordinates. The proxy patches those imports in
 scaled modes so logical cursor coordinates are mapped into the actual window
-client area. Static analysis of the game window procedure also showed that
+game area. Windowed `ClipCursor` requests for the full 640x480 logical area are
+released instead of being mapped to the client area so the title bar, close
+button, and window dragging remain reachable. Static analysis of the game window
+procedure also showed that
 `WM_MOUSEMOVE` stores `lParam` low/high words directly into the global cursor
 position variables. In scaled modes the proxy therefore maps client mouse
 messages back down to 640x480 before forwarding them to the original WndProc.

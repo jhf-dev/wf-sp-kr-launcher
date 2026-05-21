@@ -36,10 +36,37 @@ class ResolutionOptionsTest(unittest.TestCase):
         source = (ROOT / "tooling" / "runtime" / "ddraw_proxy.cpp").read_text(encoding="utf-8")
 
         self.assertIn("client_mouse_lparam_to_logical", source)
+        self.assertIn("game_area_client", source)
+        self.assertIn("game_area_screen", source)
         self.assertIn("WM_MOUSEMOVE", source)
-        self.assertIn("MulDiv(x, 640, width)", source)
-        self.assertIn("MulDiv(y, 480, height)", source)
+        self.assertIn("MulDiv(x - area.left, 640, width)", source)
+        self.assertIn("MulDiv(y - area.top, 480, height)", source)
         self.assertIn("forward_lparam", source)
+
+    def test_directdraw_proxy_clears_borderless_margins(self) -> None:
+        source = (ROOT / "tooling" / "runtime" / "ddraw_proxy.cpp").read_text(encoding="utf-8")
+
+        self.assertIn("full_client_rect_screen", source)
+        self.assertIn("clear_scaled_margins", source)
+        self.assertIn("DDBLT_COLORFILL", source)
+
+    def test_directdraw_proxy_keeps_titlebar_outside_windowed_game_clip(self) -> None:
+        source = (ROOT / "tooling" / "runtime" / "ddraw_proxy.cpp").read_text(encoding="utf-8")
+
+        self.assertIn("windowed_mode() && full_logical_rect(rect)", source)
+        self.assertIn("target = NULL", source)
+
+    def test_display_resolution_presets_are_4_by_3_and_fit_monitor(self) -> None:
+        available = core.available_4_3_resolutions(1920, 1080)
+
+        self.assertIn((1440, 1080), available)
+        self.assertNotIn((1600, 1200), available)
+        self.assertNotIn((1280, 720), available)
+        self.assertTrue(all(width * 3 == height * 4 for width, height in available))
+
+    def test_windowed_display_config_rejects_non_4_by_3_resolution(self) -> None:
+        with self.assertRaises(SystemExit):
+            core.normalize_display_config("windowed", 1280, 720)
 
     def test_direct_launch_installs_windowed_directdraw_runtime_without_registry(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
@@ -54,8 +81,8 @@ class ResolutionOptionsTest(unittest.TestCase):
                 tw_root=tw_root,
                 dry_run=False,
                 display_mode="windowed",
-                width=1280,
-                height=720,
+                width=1024,
+                height=768,
                 no_apply=True,
             )
 
@@ -69,8 +96,8 @@ class ResolutionOptionsTest(unittest.TestCase):
 
             self.assertNotIn("registry", report)
             self.assertEqual("windowed", report["display_runtime"]["config"]["mode"])
-            self.assertEqual(1280, report["display_runtime"]["config"]["width"])
-            self.assertEqual(720, report["display_runtime"]["config"]["height"])
+            self.assertEqual(1024, report["display_runtime"]["config"]["width"])
+            self.assertEqual(768, report["display_runtime"]["config"]["height"])
             self.assertEqual(payload.read_bytes(), (tw_root / "ddraw.dll").read_bytes())
             config_text = (tw_root / "wftsp_ddraw.ini").read_text(encoding="ascii")
             self.assertIn("mode=windowed", config_text)
@@ -119,8 +146,8 @@ class ResolutionOptionsTest(unittest.TestCase):
                 tw_root=tw_root,
                 dry_run=False,
                 display_mode="windowed",
-                width=1280,
-                height=720,
+                width=1024,
+                height=768,
                 no_apply=True,
             )
 

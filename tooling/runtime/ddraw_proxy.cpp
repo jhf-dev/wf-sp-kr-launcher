@@ -145,6 +145,67 @@ static BOOL runtime_scaled_mode() {
     return g_config_loaded && scaled_mode(g_config);
 }
 
+static BOOL windowed_mode() {
+    return g_config_loaded && lstrcmpiA(g_config.mode, "windowed") == 0;
+}
+
+static RECT game_area_client(HWND hwnd) {
+    RECT client = {0, 0, 640, 480};
+    if (hwnd == NULL || !GetClientRect(hwnd, &client)) {
+        return client;
+    }
+
+    LONG width = client.right - client.left;
+    LONG height = client.bottom - client.top;
+    if (width <= 0 || height <= 0) {
+        return client;
+    }
+
+    LONG area_w = width;
+    LONG area_h = MulDiv(area_w, 3, 4);
+    if (area_h > height) {
+        area_h = height;
+        area_w = MulDiv(area_h, 4, 3);
+    }
+
+    RECT area;
+    area.left = client.left + (width - area_w) / 2;
+    area.top = client.top + (height - area_h) / 2;
+    area.right = area.left + area_w;
+    area.bottom = area.top + area_h;
+    return area;
+}
+
+static RECT game_area_screen(HWND hwnd) {
+    RECT area = game_area_client(hwnd);
+    POINT points[2] = {{area.left, area.top}, {area.right, area.bottom}};
+    if (hwnd != NULL) {
+        MapWindowPoints(hwnd, NULL, points, 2);
+        area.left = points[0].x;
+        area.top = points[0].y;
+        area.right = points[1].x;
+        area.bottom = points[1].y;
+    }
+    return area;
+}
+
+static RECT full_client_rect_screen(HWND hwnd) {
+    RECT rect = {0, 0, 640, 480};
+    if (hwnd != NULL && GetClientRect(hwnd, &rect)) {
+        POINT points[2] = {{rect.left, rect.top}, {rect.right, rect.bottom}};
+        MapWindowPoints(hwnd, NULL, points, 2);
+        rect.left = points[0].x;
+        rect.top = points[0].y;
+        rect.right = points[1].x;
+        rect.bottom = points[1].y;
+    }
+    return rect;
+}
+
+static BOOL full_logical_rect(const RECT *rect) {
+    return rect != NULL && rect->left <= 0 && rect->top <= 0 && rect->right >= 640 && rect->bottom >= 480;
+}
+
 static BOOL logical_point_to_screen(int *x, int *y) {
     if (!runtime_scaled_mode() || !g_config.input_fix || g_game_hwnd == NULL) {
         return FALSE;
@@ -153,16 +214,11 @@ static BOOL logical_point_to_screen(int *x, int *y) {
         return FALSE;
     }
 
-    RECT rect = {0, 0, 640, 480};
-    if (!GetClientRect(g_game_hwnd, &rect)) {
-        return FALSE;
-    }
-    POINT points[2] = {{rect.left, rect.top}, {rect.right, rect.bottom}};
-    MapWindowPoints(g_game_hwnd, NULL, points, 2);
-    LONG width = points[1].x - points[0].x;
-    LONG height = points[1].y - points[0].y;
-    *x = points[0].x + MulDiv(*x, width, 640);
-    *y = points[0].y + MulDiv(*y, height, 480);
+    RECT area = game_area_screen(g_game_hwnd);
+    LONG width = area.right - area.left;
+    LONG height = area.bottom - area.top;
+    *x = area.left + MulDiv(*x, width, 640);
+    *y = area.top + MulDiv(*y, height, 480);
     return TRUE;
 }
 
@@ -221,20 +277,17 @@ static BOOL client_mouse_lparam_to_logical(HWND hwnd, LPARAM src, LPARAM *dst) {
         return FALSE;
     }
 
-    RECT rect;
-    if (!GetClientRect(hwnd, &rect)) {
-        return FALSE;
-    }
-    LONG width = rect.right - rect.left;
-    LONG height = rect.bottom - rect.top;
+    RECT area = game_area_client(hwnd);
+    LONG width = area.right - area.left;
+    LONG height = area.bottom - area.top;
     if (width <= 0 || height <= 0) {
         return FALSE;
     }
 
     int x = static_cast<SHORT>(LOWORD(src));
     int y = static_cast<SHORT>(HIWORD(src));
-    int logical_x = clamp_int(MulDiv(x, 640, width), 0, 639);
-    int logical_y = clamp_int(MulDiv(y, 480, height), 0, 479);
+    int logical_x = clamp_int(MulDiv(x - area.left, 640, width), 0, 639);
+    int logical_y = clamp_int(MulDiv(y - area.top, 480, height), 0, 479);
     *dst = MAKELPARAM(logical_x, logical_y);
     return TRUE;
 }
@@ -249,7 +302,9 @@ static BOOL WINAPI Hook_SetCursorPos(int x, int y) {
 static BOOL WINAPI Hook_ClipCursor(const RECT *rect) {
     RECT mapped;
     const RECT *target = rect;
-    if (logical_rect_to_screen(rect, &mapped)) {
+    if (windowed_mode() && full_logical_rect(rect)) {
+        target = NULL;
+    } else if (logical_rect_to_screen(rect, &mapped)) {
         target = &mapped;
     }
     return g_real_ClipCursor != NULL ? g_real_ClipCursor(target) : FALSE;
@@ -479,16 +534,7 @@ static void configure_window(DDProxy *proxy) {
 }
 
 static RECT client_rect_screen(HWND hwnd) {
-    RECT rect = {0, 0, 640, 480};
-    if (hwnd != NULL && GetClientRect(hwnd, &rect)) {
-        POINT points[2] = {{rect.left, rect.top}, {rect.right, rect.bottom}};
-        MapWindowPoints(hwnd, NULL, points, 2);
-        rect.left = points[0].x;
-        rect.top = points[0].y;
-        rect.right = points[1].x;
-        rect.bottom = points[1].y;
-    }
-    return rect;
+    return game_area_screen(hwnd);
 }
 
 static RECT scale_rect(DDProxy *owner, DWORD x, DWORD y, LPRECT src_rect) {
@@ -533,6 +579,36 @@ static DWORD bltfast_to_blt_flags(DWORD flags) {
         result |= DDBLT_KEYDEST;
     }
     return result;
+}
+
+static void color_fill_rect(IDirectDrawSurface *surface, const RECT &rect) {
+    if (surface == NULL || rect.left >= rect.right || rect.top >= rect.bottom) {
+        return;
+    }
+
+    DDBLTFX fx;
+    ZeroMemory(&fx, sizeof(fx));
+    fx.dwSize = sizeof(fx);
+    fx.dwFillColor = 0;
+    RECT target = rect;
+    surface->lpVtbl->Blt(surface, &target, NULL, NULL, DDBLT_COLORFILL | DDBLT_WAIT, &fx);
+}
+
+static void clear_scaled_margins(SurfaceProxy *proxy) {
+    if (proxy == NULL || proxy->owner == NULL || !scaled_mode(proxy->owner->config)) {
+        return;
+    }
+
+    RECT full = full_client_rect_screen(proxy->owner->hwnd);
+    RECT game = game_area_screen(proxy->owner->hwnd);
+    RECT left = {full.left, full.top, game.left, full.bottom};
+    RECT right = {game.right, full.top, full.right, full.bottom};
+    RECT top = {game.left, full.top, game.right, game.top};
+    RECT bottom = {game.left, game.bottom, game.right, full.bottom};
+    color_fill_rect(proxy->real, left);
+    color_fill_rect(proxy->real, right);
+    color_fill_rect(proxy->real, top);
+    color_fill_rect(proxy->real, bottom);
 }
 
 static SurfaceProxy *create_surface_proxy(IDirectDrawSurface *real, DDProxy *owner, BOOL primary) {
@@ -804,6 +880,7 @@ static HRESULT STDMETHODCALLTYPE Surface_Blt(IDirectDrawSurface *self, LPRECT ds
     IDirectDrawSurface *real_src = unwrap_surface(src);
     if (proxy->primary && scaled_mode(proxy->owner->config) && real_src != NULL) {
         RECT scaled = scale_dest_rect(proxy->owner, dst_rect);
+        clear_scaled_margins(proxy);
         return proxy->real->lpVtbl->Blt(proxy->real, &scaled, real_src, src_rect, flags | DDBLT_WAIT, fx);
     }
     return proxy->real->lpVtbl->Blt(proxy->real, dst_rect, real_src, src_rect, flags, fx);
@@ -818,6 +895,7 @@ static HRESULT STDMETHODCALLTYPE Surface_BltFast(IDirectDrawSurface *self, DWORD
     IDirectDrawSurface *real_src = unwrap_surface(src);
     if (proxy->primary && scaled_mode(proxy->owner->config) && real_src != NULL) {
         RECT dst = scale_rect(proxy->owner, x, y, src_rect);
+        clear_scaled_margins(proxy);
         return proxy->real->lpVtbl->Blt(proxy->real, &dst, real_src, src_rect, bltfast_to_blt_flags(flags), NULL);
     }
     return proxy->real->lpVtbl->BltFast(proxy->real, x, y, real_src, src_rect, flags);

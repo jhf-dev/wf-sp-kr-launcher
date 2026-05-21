@@ -75,6 +75,23 @@ class LauncherGuiDefaultsTest(unittest.TestCase):
 
         self.assertEqual("borderless", app._display_mode_arg())
 
+    def test_gui_uses_selected_4_by_3_resolution_for_windowed_mode(self) -> None:
+        app = gui.PatchGui.__new__(gui.PatchGui)
+        app.display_mode = mock.Mock()
+        app.display_mode.get.return_value = gui.DISPLAY_WINDOWED
+        app.resolution_value = mock.Mock()
+        app.resolution_value.get.return_value = "1024 x 768"
+        app.resolution_presets = [(640, 480), (800, 600), (1024, 768)]
+
+        self.assertEqual((1024, 768), app._resolution_args())
+
+    def test_gui_ignores_resolution_for_borderless_mode(self) -> None:
+        app = gui.PatchGui.__new__(gui.PatchGui)
+        app.display_mode = mock.Mock()
+        app.display_mode.get.return_value = gui.DISPLAY_BORDERLESS
+
+        self.assertEqual((None, None), app._resolution_args())
+
 
 if __name__ == "__main__":
     unittest.main()
