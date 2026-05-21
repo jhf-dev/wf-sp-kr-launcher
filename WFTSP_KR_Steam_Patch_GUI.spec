@@ -1,11 +1,17 @@
 # -*- mode: python ; coding: utf-8 -*-
+from pathlib import Path
+
+datas = []
+launcher_art = Path('assets') / 'launcher_art.png'
+if launcher_art.is_file():
+    datas.append((str(launcher_art), 'assets'))
 
 
 a = Analysis(
     ['tooling\\wftsp_steam_kr_patch_gui.py'],
     pathex=['tooling'],
     binaries=[],
-    datas=[],
+    datas=datas,
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},

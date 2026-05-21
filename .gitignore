@@ -8,6 +8,10 @@
 !WFTSP_KR_Steam_Patch_GUI.exe
 !WFTSP_KR_Steam_Patch_GUI.spec
 
+!assets/
+assets/*
+!assets/launcher_art.png
+
 !tooling/
 tooling/*
 !tooling/wftsp_dialogue_pointer_patch.py

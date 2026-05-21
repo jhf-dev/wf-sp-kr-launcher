@@ -19,7 +19,11 @@ import wftsp_steam_kr_launcher as core
 
 
 APP_TITLE = "Wind Fantasy SP KR -> Steam TW 패치 런처"
-APP_RIGHTS_NOTICE = "team-jhf 비공식 패치 런처 - 원본 게임 리소스의 권리는 각 원 권리자에게 있습니다."
+APP_RIGHTS_NOTICE = "Team-JHF 비공식 패치 런처 - 원본 게임 리소스의 권리는 각 원 권리자에게 있습니다."
+LAUNCHER_ART_RELATIVE = Path("assets") / "launcher_art.png"
+LAUNCHER_ART_PANEL_WIDTH = 330
+LAUNCHER_ART_FOCUS_X = 0.60
+LAUNCHER_ART_FOCUS_Y = 0.50
 DISPLAY_UNCHANGED = "건드리지 않음"
 DISPLAY_WINDOWED = "창모드"
 DISPLAY_BORDERLESS = "전체 창 모드"
@@ -94,11 +98,19 @@ class PatchGui(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry("900x660")
-        self.minsize(790, 540)
 
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.worker: threading.Thread | None = None
+        self.launcher_art_source = self._load_launcher_art()
+        self.launcher_art_rendered: tk.PhotoImage | None = None
+        self.launcher_art_canvas: tk.Canvas | None = None
+
+        if self.launcher_art_source:
+            self.geometry("1120x720")
+            self.minsize(980, 620)
+        else:
+            self.geometry("900x660")
+            self.minsize(790, 540)
 
         self.kr_path = tk.StringVar(value=default_kr_root())
         self.tw_path = tk.StringVar(value=default_tw_root())
@@ -116,29 +128,35 @@ class PatchGui(tk.Tk):
         self.after(100, self._drain_events)
 
     def _build_ui(self) -> None:
-        root = ttk.Frame(self, padding=14)
+        root = ttk.Frame(self)
         root.pack(fill=BOTH, expand=True)
 
-        title = ttk.Label(root, text=APP_TITLE, font=("", 15, "bold"))
+        if self.launcher_art_source:
+            self._build_art_panel(root)
+
+        main = ttk.Frame(root, padding=14)
+        main.pack(side=LEFT, fill=BOTH, expand=True)
+
+        title = ttk.Label(main, text=APP_TITLE, font=("", 15, "bold"))
         title.pack(anchor="w")
 
         subtitle = ttk.Label(
-            root,
+            main,
             text="기존 한국어판 파일을 읽어 Steam판 Win10 클라이언트에 적용하고, 진행 불가 버그픽스와 실행 표시 옵션을 함께 반영합니다.",
         )
         subtitle.pack(anchor="w", pady=(4, 4))
 
         notice = ttk.Label(
-            root,
+            main,
             text="패치에는 기존 한국어판의 리소스 파일이 필요합니다. 이 런처와 패치 파일은 게임 리소스를 포함하지 않습니다.",
             foreground="#8a3d00",
         )
         notice.pack(anchor="w", pady=(0, 14))
 
-        self._path_row(root, "한국어판 폴더", self.kr_path, self._browse_kr)
-        self._path_row(root, "Steam 대만판 폴더", self.tw_path, self._browse_tw)
+        self._path_row(main, "한국어판 폴더", self.kr_path, self._browse_kr)
+        self._path_row(main, "Steam 대만판 폴더", self.tw_path, self._browse_tw)
 
-        options = ttk.LabelFrame(root, text="실행 옵션", padding=10)
+        options = ttk.LabelFrame(main, text="실행 옵션", padding=10)
         options.pack(fill=X, pady=(8, 10))
 
         ttk.Label(options, text="화면 모드").pack(side=LEFT)
@@ -163,7 +181,7 @@ class PatchGui(tk.Tk):
         self.resolution_combo.pack(side=LEFT, padx=(8, 16))
         ttk.Checkbutton(options, text="적용 후 게임 실행", variable=self.launch_after_apply).pack(side=LEFT)
 
-        buttons = ttk.Frame(root)
+        buttons = ttk.Frame(main)
         buttons.pack(fill=X, pady=(0, 10))
         self.apply_button = ttk.Button(buttons, text="패치 적용", command=self.apply_patch)
         self.apply_button.pack(side=LEFT)
@@ -176,9 +194,9 @@ class PatchGui(tk.Tk):
         self.config_button = ttk.Button(buttons, text="WindConfig 실행", command=self.launch_config)
         self.config_button.pack(side=LEFT, padx=(8, 0))
 
-        ttk.Label(root, textvariable=self.status_text).pack(anchor="w", pady=(0, 6))
+        ttk.Label(main, textvariable=self.status_text).pack(anchor="w", pady=(0, 6))
 
-        log_frame = ttk.Frame(root)
+        log_frame = ttk.Frame(main)
         log_frame.pack(fill=BOTH, expand=True)
         self.log = tk.Text(log_frame, wrap="word", height=18)
         scrollbar = ttk.Scrollbar(log_frame, orient="vertical", command=self.log.yview)
@@ -186,7 +204,7 @@ class PatchGui(tk.Tk):
         self.log.pack(side=LEFT, fill=BOTH, expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        rights = ttk.Label(root, text=APP_RIGHTS_NOTICE, foreground="#666666")
+        rights = ttk.Label(main, text=APP_RIGHTS_NOTICE, foreground="#666666")
         rights.pack(anchor="w", pady=(8, 0))
 
         if self.tw_path.get():
@@ -202,6 +220,64 @@ class PatchGui(tk.Tk):
         ttk.Label(row, text=label, width=18).pack(side=LEFT)
         ttk.Entry(row, textvariable=variable).pack(side=LEFT, fill=X, expand=True, padx=(0, 8))
         ttk.Button(row, text="찾기", command=command).pack(side=LEFT)
+
+    def _build_art_panel(self, parent: ttk.Frame) -> None:
+        panel = tk.Frame(parent, width=LAUNCHER_ART_PANEL_WIDTH, background="#f7f4f4")
+        panel.pack(side="right", fill=BOTH)
+        panel.pack_propagate(False)
+
+        self.launcher_art_canvas = tk.Canvas(
+            panel,
+            highlightthickness=0,
+            borderwidth=0,
+            background="#f7f4f4",
+        )
+        self.launcher_art_canvas.pack(fill=BOTH, expand=True)
+        self.launcher_art_canvas.bind("<Configure>", self._redraw_launcher_art)
+
+    def _redraw_launcher_art(self, event: tk.Event) -> None:
+        if self.launcher_art_canvas is None or self.launcher_art_source is None:
+            return
+        target_width = max(1, int(event.width))
+        target_height = max(1, int(event.height))
+        source_width = self.launcher_art_source.width()
+        source_height = self.launcher_art_source.height()
+
+        # Downscale only while the image can still cover the panel. Avoid
+        # zooming past the stored asset size; stretched art looks worse than
+        # showing a little more empty canvas on unusually tall windows.
+        subsample = max(1, min(source_width // target_width, source_height // target_height))
+        image = self.launcher_art_source.subsample(subsample, subsample)
+
+        x = int((target_width / 2) - (image.width() * LAUNCHER_ART_FOCUS_X))
+        y = int((target_height / 2) - (image.height() * LAUNCHER_ART_FOCUS_Y))
+        self.launcher_art_rendered = image
+        self.launcher_art_canvas.delete("all")
+        self.launcher_art_canvas.create_image(x, y, anchor="nw", image=self.launcher_art_rendered)
+
+    def _launcher_art_candidates(self) -> list[Path]:
+        candidates: list[Path] = []
+        if getattr(sys, "frozen", False):
+            exe_dir = Path(sys.executable).resolve().parent
+            candidates.append(exe_dir / LAUNCHER_ART_RELATIVE)
+            candidates.append(exe_dir / LAUNCHER_ART_RELATIVE.name)
+            bundle_dir = getattr(sys, "_MEIPASS", None)
+            if bundle_dir:
+                candidates.append(Path(bundle_dir) / LAUNCHER_ART_RELATIVE)
+        else:
+            repo_root = Path(__file__).resolve().parents[1]
+            candidates.append(repo_root / LAUNCHER_ART_RELATIVE)
+        return candidates
+
+    def _load_launcher_art(self) -> tk.PhotoImage | None:
+        for candidate in self._launcher_art_candidates():
+            if not candidate.is_file():
+                continue
+            try:
+                return tk.PhotoImage(file=str(candidate))
+            except tk.TclError:
+                continue
+        return None
 
     def _browse_kr(self) -> None:
         initialdir = self.kr_path.get().strip() or str(Path.home())
