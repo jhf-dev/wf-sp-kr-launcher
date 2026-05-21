@@ -126,7 +126,10 @@ installed but passes the original DirectDraw exclusive path through.
 The game imports `SetCursorPos` and `ClipCursor` directly from `USER32.dll` and
 uses 640x480 fullscreen-style coordinates. The proxy patches those imports in
 scaled modes so logical cursor coordinates are mapped into the actual window
-client area.
+client area. Static analysis of the game window procedure also showed that
+`WM_MOUSEMOVE` stores `lParam` low/high words directly into the global cursor
+position variables. In scaled modes the proxy therefore maps client mouse
+messages back down to 640x480 before forwarding them to the original WndProc.
 
 The game also drives BGM with `mciSendStringA`, including `play MUSIC from 0
 notify` and `play mp3 notify from 0`. To reduce focus-return restarts without

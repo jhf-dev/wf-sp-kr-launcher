@@ -188,6 +188,57 @@ static BOOL logical_rect_to_screen(const RECT *src, RECT *dst) {
     return TRUE;
 }
 
+static int clamp_int(int value, int min_value, int max_value) {
+    if (value < min_value) {
+        return min_value;
+    }
+    if (value > max_value) {
+        return max_value;
+    }
+    return value;
+}
+
+static BOOL client_mouse_message(UINT msg) {
+    switch (msg) {
+    case WM_MOUSEMOVE:
+    case WM_LBUTTONDOWN:
+    case WM_LBUTTONUP:
+    case WM_LBUTTONDBLCLK:
+    case WM_RBUTTONDOWN:
+    case WM_RBUTTONUP:
+    case WM_RBUTTONDBLCLK:
+    case WM_MBUTTONDOWN:
+    case WM_MBUTTONUP:
+    case WM_MBUTTONDBLCLK:
+        return TRUE;
+    default:
+        return FALSE;
+    }
+}
+
+static BOOL client_mouse_lparam_to_logical(HWND hwnd, LPARAM src, LPARAM *dst) {
+    if (!runtime_scaled_mode() || !g_config.input_fix || hwnd == NULL || dst == NULL) {
+        return FALSE;
+    }
+
+    RECT rect;
+    if (!GetClientRect(hwnd, &rect)) {
+        return FALSE;
+    }
+    LONG width = rect.right - rect.left;
+    LONG height = rect.bottom - rect.top;
+    if (width <= 0 || height <= 0) {
+        return FALSE;
+    }
+
+    int x = static_cast<SHORT>(LOWORD(src));
+    int y = static_cast<SHORT>(HIWORD(src));
+    int logical_x = clamp_int(MulDiv(x, 640, width), 0, 639);
+    int logical_y = clamp_int(MulDiv(y, 480, height), 0, 479);
+    *dst = MAKELPARAM(logical_x, logical_y);
+    return TRUE;
+}
+
 static BOOL WINAPI Hook_SetCursorPos(int x, int y) {
     int mapped_x = x;
     int mapped_y = y;
@@ -316,6 +367,11 @@ static BOOL patch_import(const char *dll_name, const char *func_name, void *repl
 }
 
 static LRESULT CALLBACK Hook_WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    LPARAM forward_lparam = lparam;
+    if (client_mouse_message(msg)) {
+        client_mouse_lparam_to_logical(hwnd, lparam, &forward_lparam);
+    }
+
     if (msg == WM_ACTIVATEAPP) {
         g_window_active = (wparam != 0);
         if (g_window_active) {
@@ -342,9 +398,9 @@ static LRESULT CALLBACK Hook_WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPAR
         }
     }
     if (g_original_wndproc != NULL) {
-        return CallWindowProcA(g_original_wndproc, hwnd, msg, wparam, lparam);
+        return CallWindowProcA(g_original_wndproc, hwnd, msg, wparam, forward_lparam);
     }
-    return DefWindowProcA(hwnd, msg, wparam, lparam);
+    return DefWindowProcA(hwnd, msg, wparam, forward_lparam);
 }
 
 static void install_runtime_hooks() {

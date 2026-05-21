@@ -32,6 +32,15 @@ class ResolutionOptionsTest(unittest.TestCase):
         self.assertIn("ensure_not_topmost", source)
         self.assertNotIn("HWND_TOP,", source)
 
+    def test_directdraw_proxy_maps_client_mouse_messages_to_logical_area(self) -> None:
+        source = (ROOT / "tooling" / "runtime" / "ddraw_proxy.cpp").read_text(encoding="utf-8")
+
+        self.assertIn("client_mouse_lparam_to_logical", source)
+        self.assertIn("WM_MOUSEMOVE", source)
+        self.assertIn("MulDiv(x, 640, width)", source)
+        self.assertIn("MulDiv(y, 480, height)", source)
+        self.assertIn("forward_lparam", source)
+
     def test_direct_launch_installs_windowed_directdraw_runtime_without_registry(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)

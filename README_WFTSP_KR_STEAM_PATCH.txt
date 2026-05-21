@@ -29,7 +29,7 @@ Wind Fantasy SP KR -> Steam TW 패치 런처
   - 게임 실행 버튼은 WindConfig를 거치지 않고 wf_sp_win10.exe를 직접 실행
   - 화면 모드와 해상도는 게임 폴더의 ddraw.dll 프록시와 wftsp_ddraw.ini로 반영
   - 창모드, 전체 창 모드(borderless), 원본 전체화면 모드를 선택 가능
-  - 창모드/전체 창 모드에서 커서 좌표 보정과 포커스 복귀 BGM resume 보정을 적용
+  - 창모드/전체 창 모드에서 640x480 기준 마우스 입력/커서 좌표 보정과 포커스 복귀 BGM resume 보정을 적용
   - 창모드/전체 창 모드에서만 원본 전체화면용 자동 최소화 처리를 우회
 
 주의:
