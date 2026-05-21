@@ -50,6 +50,12 @@ class ResolutionOptionsTest(unittest.TestCase):
         self.assertIn("clear_scaled_margins", source)
         self.assertIn("DDBLT_COLORFILL", source)
 
+    def test_directdraw_proxy_scales_primary_colorfill_blt(self) -> None:
+        source = (ROOT / "tooling" / "runtime" / "ddraw_proxy.cpp").read_text(encoding="utf-8")
+
+        self.assertIn("if (proxy->primary && scaled_mode(proxy->owner->config))", source)
+        self.assertNotIn("&& real_src != NULL) {\n        RECT scaled = scale_dest_rect", source)
+
     def test_directdraw_proxy_keeps_titlebar_outside_windowed_game_clip(self) -> None:
         source = (ROOT / "tooling" / "runtime" / "ddraw_proxy.cpp").read_text(encoding="utf-8")
 

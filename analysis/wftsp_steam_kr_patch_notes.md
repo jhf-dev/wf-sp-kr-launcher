@@ -127,6 +127,9 @@ also forces non-primary 640x480 offscreen surfaces to RGB565 16bpp in scaled
 modes, because the game locks those surfaces and writes `ushort` pixels directly
 after checking the surface `RBitMask`. `fullscreen` keeps the proxy installed
 but passes the original DirectDraw exclusive path through.
+Primary-surface `Blt` scaling is applied even when the source surface is null,
+because the game uses `DDBLT_COLORFILL` clears to erase small UI/text regions
+before redrawing menu hints and confirmation dialogs.
 
 The game imports `SetCursorPos` and `ClipCursor` directly from `USER32.dll` and
 uses 640x480 fullscreen-style coordinates. The proxy patches those imports in

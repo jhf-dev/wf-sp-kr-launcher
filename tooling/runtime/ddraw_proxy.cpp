@@ -878,7 +878,7 @@ static HRESULT STDMETHODCALLTYPE Surface_AddOverlayDirtyRect(IDirectDrawSurface 
 static HRESULT STDMETHODCALLTYPE Surface_Blt(IDirectDrawSurface *self, LPRECT dst_rect, LPDIRECTDRAWSURFACE src, LPRECT src_rect, DWORD flags, LPDDBLTFX fx) {
     SurfaceProxy *proxy = as_surface(self);
     IDirectDrawSurface *real_src = unwrap_surface(src);
-    if (proxy->primary && scaled_mode(proxy->owner->config) && real_src != NULL) {
+    if (proxy->primary && scaled_mode(proxy->owner->config)) {
         RECT scaled = scale_dest_rect(proxy->owner, dst_rect);
         clear_scaled_margins(proxy);
         return proxy->real->lpVtbl->Blt(proxy->real, &scaled, real_src, src_rect, flags | DDBLT_WAIT, fx);
