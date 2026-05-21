@@ -14,6 +14,7 @@
 - Steam Win10판 `wind.dll`의 CP936 출력 보정을 CP949로 패치
 - Steam 대만판 원본 파일 자동 백업 및 복구
 - `wf_sp_win10.exe` 직접 실행 버튼 제공
+- 창모드/전체화면 및 해상도 설정을 게임 실행 전에 반영
 - 선택적으로 `WindConfig.exe` 실행
 
 ## 다운로드/실행
@@ -36,6 +37,15 @@ WFTSP_KR_Steam_Patch_GUI.exe
 6. 설정 프로그램이 필요하면 `WindConfig 실행`을 사용합니다.
 
 패치 적용 전에는 게임과 `WindConfig.exe`를 종료하세요.
+
+## 화면 설정
+
+런처의 화면 모드와 해상도 입력값은 `패치 적용` 또는 `게임 실행` 시점에 `HKCU\WindSP` 레지스트리 설정으로 기록됩니다.
+
+- 화면 모드: `IsFullscreen`
+- 해상도: `CreationWidth`, `CreationHeight`
+
+대만판 Win10 클라이언트가 원래 읽는 설정 경로를 그대로 사용합니다. Borderless 전환은 현재 포함하지 않았습니다.
 
 ## 원본 보존
 
@@ -79,9 +89,9 @@ Steam 대만판 폴더의 기존 파일은 패치 적용 전에 다음 위치로
 
 ## Windows 11 보안 안내
 
-테스트 환경에서는 Windows 11 Smart App Control과 NAS 경유 다른 PC 실행 모두 별도 경고 없이 통과했습니다.
+Windows 보안 또는 백신이 런처 실행을 막으면, 패치를 적용하는 동안만 차단을 해제한 뒤 다시 원래 설정으로 되돌리세요.
 
-다만 보안 프로그램이나 Smart App Control 정책은 PC마다 다를 수 있습니다. 패치 런처 실행 또는 패치 적용이 차단되는 경우, 패치 적용 중에만 보안 정책을 일시적으로 완화하고 게임 실행까지 확인한 뒤 원래 설정으로 되돌리는 것을 권장합니다.
+패치가 끝난 뒤 게임은 Steam판 `wf_sp_win10.exe`를 직접 실행합니다.
 
 ## 개발자용 명령
 
@@ -101,6 +111,12 @@ Win10 실행 파일 직접 실행:
 
 ```powershell
 python tooling\wftsp_steam_kr_launcher.py launch-win10 --no-apply --tw-root <TW폴더>
+```
+
+해상도 지정 후 실행:
+
+```powershell
+python tooling\wftsp_steam_kr_launcher.py launch-win10 --no-apply --tw-root <TW폴더> --display-mode windowed --width 1280 --height 720
 ```
 
 원본 복구:

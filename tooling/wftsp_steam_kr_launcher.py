@@ -549,22 +549,30 @@ def status(args: argparse.Namespace) -> dict[str, object]:
 
 
 def launch_executable(args: argparse.Namespace, executable_name: str, action: str) -> dict[str, object]:
-    if not args.no_apply:
-        apply_report = apply_patch(args)
-    else:
-        _kr_root, tw_root_for_check = resolve_paths(args)
-        apply_report = {"skipped": True, "wind_dll_state": wind_dll_patch_state(tw_root_for_check / "wind.dll")}
-
     _kr_root, tw_root = resolve_paths(args)
     exe = tw_root / executable_name
     if not exe.exists():
         raise SystemExit(f"{executable_name} not found: {exe}")
 
+    if not args.no_apply:
+        apply_report = apply_patch(args)
+        registry_report = apply_report.get("registry", {"changed": False})
+    else:
+        _kr_root, tw_root_for_check = resolve_paths(args)
+        apply_report = {"skipped": True, "wind_dll_state": wind_dll_patch_state(tw_root_for_check / "wind.dll")}
+        registry_report = set_registry_options(args.display_mode, args.width, args.height, dry_run=args.dry_run)
+
     if args.dry_run:
-        return {"action": action, "dry_run": True, "would_run": str(exe), "apply": apply_report}
+        return {
+            "action": action,
+            "dry_run": True,
+            "would_run": str(exe),
+            "apply": apply_report,
+            "registry": registry_report,
+        }
 
     subprocess.Popen([str(exe)], cwd=str(tw_root))
-    return {"action": action, "launched": str(exe), "apply": apply_report}
+    return {"action": action, "launched": str(exe), "apply": apply_report, "registry": registry_report}
 
 
 def launch(args: argparse.Namespace) -> dict[str, object]:

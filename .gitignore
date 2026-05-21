@@ -22,3 +22,4 @@ analysis/*
 tests/*
 !tests/__init__.py
 !tests/test_launcher_gui_defaults.py
+!tests/test_resolution_options.py
