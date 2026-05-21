@@ -56,7 +56,10 @@ class ResolutionOptionsTest(unittest.TestCase):
             self.assertEqual(1280, report["display_runtime"]["config"]["width"])
             self.assertEqual(720, report["display_runtime"]["config"]["height"])
             self.assertEqual(payload.read_bytes(), (tw_root / "ddraw.dll").read_bytes())
-            self.assertIn("mode=windowed", (tw_root / "wftsp_ddraw.ini").read_text(encoding="ascii"))
+            config_text = (tw_root / "wftsp_ddraw.ini").read_text(encoding="ascii")
+            self.assertIn("mode=windowed", config_text)
+            self.assertIn("input_fix=1", config_text)
+            self.assertIn("audio_focus_fix=1", config_text)
 
     def test_direct_launch_dry_run_reports_borderless_runtime_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

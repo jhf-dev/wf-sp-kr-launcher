@@ -440,6 +440,8 @@ def normalize_display_config(
         "width": width if width is not None else 640,
         "height": height if height is not None else 480,
         "debug": 0,
+        "input_fix": 1,
+        "audio_focus_fix": 1,
     }
 
 
@@ -450,6 +452,8 @@ def render_ddraw_config(config: dict[str, int | str]) -> bytes:
         f"width={config['width']}",
         f"height={config['height']}",
         f"debug={config['debug']}",
+        f"input_fix={config['input_fix']}",
+        f"audio_focus_fix={config['audio_focus_fix']}",
         "",
     ]
     return "\n".join(lines).encode("ascii")
@@ -464,7 +468,7 @@ def read_ddraw_config(path: Path) -> dict[str, int | str] | None:
         if not line or line.startswith("[") or "=" not in line:
             continue
         key, value = [part.strip() for part in line.split("=", 1)]
-        if key in {"width", "height", "debug"}:
+        if key in {"width", "height", "debug", "input_fix", "audio_focus_fix"}:
             try:
                 values[key] = int(value)
             except ValueError:

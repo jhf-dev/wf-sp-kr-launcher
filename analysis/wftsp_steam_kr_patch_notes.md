@@ -123,6 +123,17 @@ scaled modes, because the game locks those surfaces and writes `ushort` pixels
 directly after checking the surface `RBitMask`. `fullscreen` keeps the proxy
 installed but passes the original DirectDraw exclusive path through.
 
+The game imports `SetCursorPos` and `ClipCursor` directly from `USER32.dll` and
+uses 640x480 fullscreen-style coordinates. The proxy patches those imports in
+scaled modes so logical cursor coordinates are mapped into the actual window
+client area.
+
+The game also drives BGM with `mciSendStringA`, including `play MUSIC from 0
+notify` and `play mp3 notify from 0`. To reduce focus-return restarts without
+breaking normal music changes or end-of-track looping, the proxy subclasses the
+game window, records focus-return time, and rewrites only those play-from-zero
+commands issued within a short focus-resume window.
+
 ## Current Applied State
 
 After `python tooling\wftsp_steam_kr_launcher.py apply`:

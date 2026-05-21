@@ -3,6 +3,7 @@
 #define COBJMACROS
 #include <windows.h>
 #include <ddraw.h>
+#include <mmsystem.h>
 #include <stdio.h>
 #include <string.h>
 
@@ -11,6 +12,8 @@ struct RuntimeConfig {
     LONG width;
     LONG height;
     BOOL debug;
+    BOOL input_fix;
+    BOOL audio_focus_fix;
 };
 
 struct DDProxy;
@@ -33,8 +36,22 @@ struct DDProxy {
 
 static HMODULE g_module = NULL;
 static HMODULE g_real_ddraw = NULL;
+static RuntimeConfig g_config;
+static BOOL g_config_loaded = FALSE;
+static HWND g_game_hwnd = NULL;
+static WNDPROC g_original_wndproc = NULL;
+static DWORD g_focus_resume_tick = 0;
+static BOOL g_window_active = TRUE;
+static BOOL g_hooks_installed = FALSE;
 
 typedef HRESULT (WINAPI *DirectDrawCreateProc)(GUID FAR *, LPDIRECTDRAW FAR *, IUnknown FAR *);
+typedef BOOL (WINAPI *SetCursorPosProc)(int, int);
+typedef BOOL (WINAPI *ClipCursorProc)(const RECT *);
+typedef MCIERROR (WINAPI *MciSendStringAProc)(LPCSTR, LPSTR, UINT, HWND);
+
+static SetCursorPosProc g_real_SetCursorPos = NULL;
+static ClipCursorProc g_real_ClipCursor = NULL;
+static MciSendStringAProc g_real_mciSendStringA = NULL;
 
 static IDirectDrawVtbl g_dd_vtbl;
 static IDirectDrawSurfaceVtbl g_surface_vtbl;
@@ -80,6 +97,8 @@ static RuntimeConfig load_config() {
     config.width = 640;
     config.height = 480;
     config.debug = FALSE;
+    config.input_fix = TRUE;
+    config.audio_focus_fix = TRUE;
 
     char dir[MAX_PATH];
     char ini[MAX_PATH];
@@ -90,6 +109,8 @@ static RuntimeConfig load_config() {
     config.width = GetPrivateProfileIntA("wftsp_ddraw", "width", config.width, ini);
     config.height = GetPrivateProfileIntA("wftsp_ddraw", "height", config.height, ini);
     config.debug = GetPrivateProfileIntA("wftsp_ddraw", "debug", 0, ini) != 0;
+    config.input_fix = GetPrivateProfileIntA("wftsp_ddraw", "input_fix", 1, ini) != 0;
+    config.audio_focus_fix = GetPrivateProfileIntA("wftsp_ddraw", "audio_focus_fix", 1, ini) != 0;
     if (config.width < 320) {
         config.width = 640;
     }
@@ -115,6 +136,220 @@ static void debug_log(const RuntimeConfig &config, const char *message) {
     WriteFile(file, message, lstrlenA(message), &written, NULL);
     WriteFile(file, "\r\n", 2, &written, NULL);
     CloseHandle(file);
+}
+
+static BOOL runtime_scaled_mode() {
+    return g_config_loaded && scaled_mode(g_config);
+}
+
+static BOOL logical_point_to_screen(int *x, int *y) {
+    if (!runtime_scaled_mode() || !g_config.input_fix || g_game_hwnd == NULL) {
+        return FALSE;
+    }
+    if (*x < 0 || *x > 640 || *y < 0 || *y > 480) {
+        return FALSE;
+    }
+
+    RECT rect = {0, 0, 640, 480};
+    if (!GetClientRect(g_game_hwnd, &rect)) {
+        return FALSE;
+    }
+    POINT points[2] = {{rect.left, rect.top}, {rect.right, rect.bottom}};
+    MapWindowPoints(g_game_hwnd, NULL, points, 2);
+    LONG width = points[1].x - points[0].x;
+    LONG height = points[1].y - points[0].y;
+    *x = points[0].x + MulDiv(*x, width, 640);
+    *y = points[0].y + MulDiv(*y, height, 480);
+    return TRUE;
+}
+
+static BOOL logical_rect_to_screen(const RECT *src, RECT *dst) {
+    if (src == NULL || !runtime_scaled_mode() || !g_config.input_fix || g_game_hwnd == NULL) {
+        return FALSE;
+    }
+    if (src->left < 0 || src->top < 0 || src->right > 640 || src->bottom > 480) {
+        return FALSE;
+    }
+
+    int left = src->left;
+    int top = src->top;
+    int right = src->right;
+    int bottom = src->bottom;
+    if (!logical_point_to_screen(&left, &top) || !logical_point_to_screen(&right, &bottom)) {
+        return FALSE;
+    }
+    dst->left = left;
+    dst->top = top;
+    dst->right = right;
+    dst->bottom = bottom;
+    return TRUE;
+}
+
+static BOOL WINAPI Hook_SetCursorPos(int x, int y) {
+    int mapped_x = x;
+    int mapped_y = y;
+    logical_point_to_screen(&mapped_x, &mapped_y);
+    return g_real_SetCursorPos != NULL ? g_real_SetCursorPos(mapped_x, mapped_y) : FALSE;
+}
+
+static BOOL WINAPI Hook_ClipCursor(const RECT *rect) {
+    RECT mapped;
+    const RECT *target = rect;
+    if (logical_rect_to_screen(rect, &mapped)) {
+        target = &mapped;
+    }
+    return g_real_ClipCursor != NULL ? g_real_ClipCursor(target) : FALSE;
+}
+
+static BOOL contains_ascii_ci(const char *haystack, const char *needle) {
+    if (haystack == NULL || needle == NULL || needle[0] == '\0') {
+        return FALSE;
+    }
+    size_t needle_len = lstrlenA(needle);
+    for (const char *p = haystack; *p != '\0'; ++p) {
+        size_t i = 0;
+        while (i < needle_len && p[i] != '\0') {
+            char a = p[i];
+            char b = needle[i];
+            if (a >= 'A' && a <= 'Z') {
+                a = static_cast<char>(a - 'A' + 'a');
+            }
+            if (b >= 'A' && b <= 'Z') {
+                b = static_cast<char>(b - 'A' + 'a');
+            }
+            if (a != b) {
+                break;
+            }
+            ++i;
+        }
+        if (i == needle_len) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static BOOL rewrite_focus_resume_mci_command(LPCSTR command, char *buffer, DWORD size) {
+    if (command == NULL || !runtime_scaled_mode() || !g_config.audio_focus_fix) {
+        return FALSE;
+    }
+    if (g_focus_resume_tick == 0 || GetTickCount() - g_focus_resume_tick > 3000) {
+        return FALSE;
+    }
+    if (contains_ascii_ci(command, "play MUSIC from 0 notify")) {
+        lstrcpynA(buffer, "play MUSIC notify", size);
+        return TRUE;
+    }
+    if (contains_ascii_ci(command, "play mp3 notify from 0")) {
+        lstrcpynA(buffer, "play mp3 notify", size);
+        return TRUE;
+    }
+    return FALSE;
+}
+
+static MCIERROR WINAPI Hook_mciSendStringA(LPCSTR command, LPSTR return_string, UINT return_length, HWND callback) {
+    char rewritten[128];
+    LPCSTR actual = command;
+    if (rewrite_focus_resume_mci_command(command, rewritten, sizeof(rewritten))) {
+        actual = rewritten;
+        debug_log(g_config, "mci focus-resume play-from-0 rewritten");
+    }
+    if (g_config_loaded && g_config.debug && command != NULL) {
+        debug_log(g_config, command);
+    }
+    return g_real_mciSendStringA != NULL ? g_real_mciSendStringA(actual, return_string, return_length, callback) : 0;
+}
+
+static BOOL patch_import(const char *dll_name, const char *func_name, void *replacement, void **original) {
+    HMODULE module = GetModuleHandleA(NULL);
+    if (module == NULL) {
+        return FALSE;
+    }
+    BYTE *base = reinterpret_cast<BYTE *>(module);
+    IMAGE_DOS_HEADER *dos = reinterpret_cast<IMAGE_DOS_HEADER *>(base);
+    if (dos->e_magic != IMAGE_DOS_SIGNATURE) {
+        return FALSE;
+    }
+    IMAGE_NT_HEADERS *nt = reinterpret_cast<IMAGE_NT_HEADERS *>(base + dos->e_lfanew);
+    if (nt->Signature != IMAGE_NT_SIGNATURE) {
+        return FALSE;
+    }
+    IMAGE_DATA_DIRECTORY dir = nt->OptionalHeader.DataDirectory[IMAGE_DIRECTORY_ENTRY_IMPORT];
+    if (dir.VirtualAddress == 0) {
+        return FALSE;
+    }
+    IMAGE_IMPORT_DESCRIPTOR *desc = reinterpret_cast<IMAGE_IMPORT_DESCRIPTOR *>(base + dir.VirtualAddress);
+    for (; desc->Name != 0; ++desc) {
+        const char *current_dll = reinterpret_cast<const char *>(base + desc->Name);
+        if (lstrcmpiA(current_dll, dll_name) != 0) {
+            continue;
+        }
+        IMAGE_THUNK_DATA *orig = reinterpret_cast<IMAGE_THUNK_DATA *>(base + desc->OriginalFirstThunk);
+        IMAGE_THUNK_DATA *thunk = reinterpret_cast<IMAGE_THUNK_DATA *>(base + desc->FirstThunk);
+        if (desc->OriginalFirstThunk == 0) {
+            orig = thunk;
+        }
+        for (; orig->u1.AddressOfData != 0; ++orig, ++thunk) {
+            if ((orig->u1.Ordinal & IMAGE_ORDINAL_FLAG) != 0) {
+                continue;
+            }
+            IMAGE_IMPORT_BY_NAME *import_name = reinterpret_cast<IMAGE_IMPORT_BY_NAME *>(base + orig->u1.AddressOfData);
+            if (lstrcmpiA(reinterpret_cast<const char *>(import_name->Name), func_name) != 0) {
+                continue;
+            }
+            DWORD old_protect = 0;
+            if (!VirtualProtect(&thunk->u1.Function, sizeof(void *), PAGE_READWRITE, &old_protect)) {
+                return FALSE;
+            }
+            if (original != NULL && *original == NULL) {
+                *original = reinterpret_cast<void *>(thunk->u1.Function);
+            }
+            thunk->u1.Function = reinterpret_cast<ULONG_PTR>(replacement);
+            VirtualProtect(&thunk->u1.Function, sizeof(void *), old_protect, &old_protect);
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
+static LRESULT CALLBACK Hook_WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    if (msg == WM_ACTIVATEAPP) {
+        g_window_active = (wparam != 0);
+        if (g_window_active) {
+            g_focus_resume_tick = GetTickCount();
+        }
+    } else if (msg == WM_ACTIVATE) {
+        g_window_active = (LOWORD(wparam) != WA_INACTIVE);
+        if (g_window_active) {
+            g_focus_resume_tick = GetTickCount();
+        }
+    } else if (msg == WM_SETFOCUS) {
+        g_window_active = TRUE;
+        g_focus_resume_tick = GetTickCount();
+    } else if (msg == WM_KILLFOCUS) {
+        g_window_active = FALSE;
+    }
+    if (g_original_wndproc != NULL) {
+        return CallWindowProcA(g_original_wndproc, hwnd, msg, wparam, lparam);
+    }
+    return DefWindowProcA(hwnd, msg, wparam, lparam);
+}
+
+static void install_runtime_hooks() {
+    if (g_hooks_installed) {
+        return;
+    }
+    patch_import("USER32.dll", "SetCursorPos", reinterpret_cast<void *>(Hook_SetCursorPos), reinterpret_cast<void **>(&g_real_SetCursorPos));
+    patch_import("USER32.dll", "ClipCursor", reinterpret_cast<void *>(Hook_ClipCursor), reinterpret_cast<void **>(&g_real_ClipCursor));
+    patch_import("WINMM.dll", "mciSendStringA", reinterpret_cast<void *>(Hook_mciSendStringA), reinterpret_cast<void **>(&g_real_mciSendStringA));
+    g_hooks_installed = TRUE;
+}
+
+static void subclass_game_window(HWND hwnd) {
+    if (hwnd == NULL || g_original_wndproc != NULL) {
+        return;
+    }
+    g_original_wndproc = reinterpret_cast<WNDPROC>(SetWindowLongPtrA(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(Hook_WindowProc)));
 }
 
 static void configure_window(DDProxy *proxy) {
@@ -416,6 +651,8 @@ static HRESULT STDMETHODCALLTYPE DD_RestoreDisplayMode(IDirectDraw *self) {
 static HRESULT STDMETHODCALLTYPE DD_SetCooperativeLevel(IDirectDraw *self, HWND hwnd, DWORD flags) {
     DDProxy *proxy = as_dd(self);
     proxy->hwnd = hwnd;
+    g_game_hwnd = hwnd;
+    subclass_game_window(hwnd);
     if (scaled_mode(proxy->config)) {
         HRESULT hr = proxy->real->lpVtbl->SetCooperativeLevel(proxy->real, hwnd, DDSCL_NORMAL);
         configure_window(proxy);
@@ -727,6 +964,9 @@ HRESULT WINAPI DirectDrawCreate(GUID FAR *guid, LPDIRECTDRAW FAR *dd, IUnknown F
     proxy->refs = 1;
     proxy->hwnd = NULL;
     proxy->config = load_config();
+    g_config = proxy->config;
+    g_config_loaded = TRUE;
+    install_runtime_hooks();
     debug_log(proxy->config, "DirectDrawCreate wrapped");
     *dd = reinterpret_cast<IDirectDraw *>(proxy);
     return hr;
