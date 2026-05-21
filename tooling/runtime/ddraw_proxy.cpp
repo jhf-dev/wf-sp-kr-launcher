@@ -188,6 +188,22 @@ static RECT scale_rect(DDProxy *owner, DWORD x, DWORD y, LPRECT src_rect) {
     return dst;
 }
 
+static RECT scale_dest_rect(DDProxy *owner, LPRECT dst_rect) {
+    RECT base = client_rect_screen(owner->hwnd);
+    if (dst_rect == NULL) {
+        return base;
+    }
+
+    LONG target_w = base.right - base.left;
+    LONG target_h = base.bottom - base.top;
+    RECT dst;
+    dst.left = base.left + MulDiv(dst_rect->left, target_w, 640);
+    dst.top = base.top + MulDiv(dst_rect->top, target_h, 480);
+    dst.right = base.left + MulDiv(dst_rect->right, target_w, 640);
+    dst.bottom = base.top + MulDiv(dst_rect->bottom, target_h, 480);
+    return dst;
+}
+
 static DWORD bltfast_to_blt_flags(DWORD flags) {
     DWORD result = DDBLT_WAIT;
     if ((flags & DDBLTFAST_SRCCOLORKEY) != 0) {
@@ -465,10 +481,7 @@ static HRESULT STDMETHODCALLTYPE Surface_Blt(IDirectDrawSurface *self, LPRECT ds
     SurfaceProxy *proxy = as_surface(self);
     IDirectDrawSurface *real_src = unwrap_surface(src);
     if (proxy->primary && scaled_mode(proxy->owner->config) && real_src != NULL) {
-        RECT scaled = client_rect_screen(proxy->owner->hwnd);
-        if (dst_rect != NULL) {
-            scaled = scale_rect(proxy->owner, dst_rect->left, dst_rect->top, src_rect);
-        }
+        RECT scaled = scale_dest_rect(proxy->owner, dst_rect);
         return proxy->real->lpVtbl->Blt(proxy->real, &scaled, real_src, src_rect, flags | DDBLT_WAIT, fx);
     }
     return proxy->real->lpVtbl->Blt(proxy->real, dst_rect, real_src, src_rect, flags, fx);
