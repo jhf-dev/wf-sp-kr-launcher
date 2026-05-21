@@ -12,6 +12,9 @@ Wind Fantasy SP KR -> Steam TW 패치 런처
   - 패치 적용에는 사용자가 보유한 기존 한국어판 Wind Fantasy SP 폴더가 필요합니다.
   - 한국어판 폴더 입력칸은 빈 값으로 시작하므로 직접 선택해야 합니다.
   - Steam 대만판 폴더는 Steam 설치 정보에서 자동으로 탐지합니다.
+  - 이 도구는 team-jhf가 작성/관리하는 비공식 패치 런처입니다.
+  - 위 표기는 런처와 패치 보조 코드에 대한 표시이며, 원본 게임 권리 주장이나 공식 제휴를 의미하지 않습니다.
+  - 원본 게임 리소스의 권리는 각 원 권리자에게 있으며, 원본 또는 패치된 게임 데이터의 재배포 권리를 부여하지 않습니다.
 
 사용 순서:
   1. WFTSP_KR_Steam_Patch_GUI.exe 실행
@@ -42,3 +45,10 @@ Wind Fantasy SP KR -> Steam TW 패치 런처
   - 화면 옵션이 문제를 일으키면 TW 원본 복구로 런처가 만든 ddraw.dll/wftsp_ddraw.ini도 제거됩니다.
   - 보정만 끄려면 wftsp_ddraw.ini에서 input_fix=0, audio_focus_fix=0, inactive_window_spoof=0으로 바꿀 수 있습니다.
   - Windows 보안 또는 백신이 런처 실행을 막으면 패치 적용 중에만 차단을 해제하고, 적용 후 원래 설정으로 되돌리세요.
+
+권리/라이선스 고지:
+  - 이 런처와 패치 보조 코드는 team-jhf가 작성/관리하는 비공식 도구입니다.
+  - 이 도구의 배포는 원본 게임에 대한 권리 주장, 사용 허가, 공식 지원 또는 원 권리자와의 제휴를 의미하지 않습니다.
+  - Wind Fantasy, Wind Fantasy Tactics Special, 원본 실행 파일, 데이터, 이미지, 음악, 상표 및 관련 저작물은 각 원 권리자의 자산입니다.
+  - standalone exe는 PyInstaller로 빌드되며, 제3자 런타임 구성 요소를 포함할 수 있습니다.
+  - 배포 런타임 구성 요소와 소스 빌드 도구 라이선스 고지는 THIRD_PARTY_NOTICES.txt를 확인하세요.

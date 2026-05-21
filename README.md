@@ -4,6 +4,8 @@
 
 이 저장소와 배포 패키지는 게임 리소스 파일을 직접 포함하지 않습니다. 패치를 적용하려면 사용자가 보유한 기존 한국어판 정식 발매본 폴더가 필요합니다.
 
+이 도구는 team-jhf가 작성/관리하는 비공식 패치 런처입니다. 이 표기는 런처와 패치 보조 코드에 대한 표시이며, 원본 게임에 대한 권리 주장이나 사용 허가를 의미하지 않습니다. 원본 게임의 명칭, 실행 파일, 데이터, 이미지, 음악 등 모든 게임 리소스의 권리는 각 원 권리자에게 있습니다.
+
 ## 주요 기능
 
 - Steam 설치 정보를 읽어 `Wind Fantasy SP` Steam판 경로 자동 탐지
@@ -165,3 +167,12 @@ python -m PyInstaller --noconfirm --clean --noconsole --onefile --name WFTSP_KR_
 - `tooling/wftsp_fy_city_exit_patch.py`: FY성 나가기 보정 로직
 - `payload/ddraw.dll`: 런처가 Steam판 폴더에 복사하는 DirectDraw 프록시
 - `analysis/wftsp_steam_kr_patch_notes.md`: 분석 메모
+- `THIRD_PARTY_NOTICES.txt`: standalone 빌드에 포함될 수 있는 제3자 구성 요소 및 빌드 도구 라이선스 고지
+
+## 권리 및 라이선스 고지
+
+이 런처와 패치 보조 코드는 team-jhf가 작성/관리하는 비공식 도구입니다. 이 도구의 배포는 원본 게임에 대한 권리 주장, 사용 허가, 공식 지원 또는 원 권리자와의 제휴를 의미하지 않습니다.
+
+`Wind Fantasy`, `Wind Fantasy Tactics Special`, 원본 실행 파일, 원본 데이터, 이미지, 음악, 상표 및 관련 저작물은 각 원 권리자의 자산입니다. 본 도구는 원본 게임 파일을 대체하거나 원본 저작물을 재배포하기 위한 목적으로 제공되지 않습니다.
+
+standalone 실행 파일은 PyInstaller로 빌드되며, 빌드 환경 및 포함된 기능에 따라 제3자 런타임 구성 요소를 포함할 수 있습니다. 배포물에 실제 포함될 수 있는 런타임 구성 요소와 소스 빌드 도구 라이선스 고지는 `THIRD_PARTY_NOTICES.txt`에 구분해 정리합니다.

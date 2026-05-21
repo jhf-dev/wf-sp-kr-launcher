@@ -19,6 +19,7 @@ import wftsp_steam_kr_launcher as core
 
 
 APP_TITLE = "Wind Fantasy SP KR -> Steam TW 패치 런처"
+APP_RIGHTS_NOTICE = "team-jhf 비공식 패치 런처 - 원본 게임 리소스의 권리는 각 원 권리자에게 있습니다."
 DISPLAY_UNCHANGED = "건드리지 않음"
 DISPLAY_WINDOWED = "창모드"
 DISPLAY_BORDERLESS = "전체 창 모드"
@@ -184,6 +185,9 @@ class PatchGui(tk.Tk):
         self.log.configure(yscrollcommand=scrollbar.set)
         self.log.pack(side=LEFT, fill=BOTH, expand=True)
         scrollbar.pack(side="right", fill="y")
+
+        rights = ttk.Label(root, text=APP_RIGHTS_NOTICE, foreground="#666666")
+        rights.pack(anchor="w", pady=(8, 0))
 
         if self.tw_path.get():
             self._log(f"Steam판 폴더를 자동으로 찾았습니다: {self.tw_path.get()}")
