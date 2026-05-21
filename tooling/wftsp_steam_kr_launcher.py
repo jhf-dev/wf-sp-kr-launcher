@@ -13,6 +13,7 @@ import dataclasses
 import hashlib
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -30,6 +31,7 @@ except ImportError:  # pragma: no cover - this tool is Windows-only in practice.
 TARGET_DEFAULT = Path("Wind Fantasy SP_TW")
 BACKUP_DIR_NAME = "_wftsp_kr_patch_backup"
 STATE_FILE_NAME = "wftsp_kr_patch_state.json"
+STEAM_GAME_DIR_NAMES = ("Wind Fantasy SP", "Wind Fantasy SP_TW")
 
 EXPECTED_TW_WIND_DLL_SHA256 = (
     "05BC2FE4099F8430035C7A60CBDB072C0DC82393320A5F222A8C2804366336AD"
@@ -160,10 +162,97 @@ def ensure_target_layout(tw_root: Path) -> None:
         raise SystemExit(f"TW Steam target is missing required files: {', '.join(missing)}")
 
 
+def has_target_layout(tw_root: Path) -> bool:
+    return all((tw_root / name).exists() for name in TARGET_EXECUTABLES)
+
+
 def ensure_sources(kr_root: Path) -> None:
     missing = [name for name in KR_OVERLAY_FILES if not (kr_root / name).exists()]
     if missing:
         raise SystemExit(f"KR source is missing overlay files: {', '.join(missing)}")
+
+
+def _dedupe_paths(paths: list[Path]) -> list[Path]:
+    result: list[Path] = []
+    seen: set[str] = set()
+    for path in paths:
+        try:
+            key = str(path.expanduser().resolve()).lower()
+        except OSError:
+            key = str(path.expanduser().absolute()).lower()
+        if key not in seen:
+            seen.add(key)
+            result.append(path)
+    return result
+
+
+def steam_roots_from_registry() -> list[Path]:
+    if winreg is None:
+        return []
+
+    locations = [
+        (winreg.HKEY_CURRENT_USER, r"Software\Valve\Steam", ("SteamPath", "InstallPath")),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\WOW6432Node\Valve\Steam", ("InstallPath", "SteamPath")),
+        (winreg.HKEY_LOCAL_MACHINE, r"SOFTWARE\Valve\Steam", ("InstallPath", "SteamPath")),
+    ]
+    roots: list[Path] = []
+    for hive, key_name, value_names in locations:
+        try:
+            with winreg.OpenKey(hive, key_name) as key:
+                for value_name in value_names:
+                    try:
+                        value, _value_type = winreg.QueryValueEx(key, value_name)
+                    except OSError:
+                        continue
+                    if isinstance(value, str) and value.strip():
+                        roots.append(Path(value.replace("/", "\\")))
+        except OSError:
+            continue
+    return _dedupe_paths(roots)
+
+
+def default_steam_roots() -> list[Path]:
+    roots = steam_roots_from_registry()
+    for env_name in ("ProgramFiles(x86)", "ProgramFiles"):
+        value = os.environ.get(env_name)
+        if value:
+            roots.append(Path(value) / "Steam")
+    return _dedupe_paths(roots)
+
+
+_VDF_PATH_RE = re.compile(r'"path"\s*"((?:\\.|[^"\\])*)"')
+
+
+def _unescape_vdf_string(value: str) -> str:
+    return value.replace(r"\\", "\\").replace(r"\"", '"')
+
+
+def steam_library_roots(steam_root: Path) -> list[Path]:
+    roots = [steam_root]
+    libraryfolders = steam_root / "steamapps" / "libraryfolders.vdf"
+    if libraryfolders.exists():
+        text = libraryfolders.read_text(encoding="utf-8", errors="replace")
+        for match in _VDF_PATH_RE.finditer(text):
+            roots.append(Path(_unescape_vdf_string(match.group(1))))
+    return _dedupe_paths(roots)
+
+
+def candidate_wftsp_roots(steam_root: Path) -> list[Path]:
+    candidates: list[Path] = []
+    if has_target_layout(steam_root):
+        candidates.append(steam_root)
+    for library_root in steam_library_roots(steam_root):
+        for dirname in STEAM_GAME_DIR_NAMES:
+            candidates.append(library_root / "steamapps" / "common" / dirname)
+    return _dedupe_paths(candidates)
+
+
+def detect_steam_wftsp_root(steam_roots: list[Path] | None = None) -> Path | None:
+    for steam_root in steam_roots if steam_roots is not None else default_steam_roots():
+        for candidate in candidate_wftsp_roots(steam_root):
+            if has_target_layout(candidate):
+                return candidate.resolve()
+    return None
 
 
 def running_wftsp_processes() -> list[str]:
@@ -459,7 +548,7 @@ def status(args: argparse.Namespace) -> dict[str, object]:
     }
 
 
-def launch(args: argparse.Namespace) -> dict[str, object]:
+def launch_executable(args: argparse.Namespace, executable_name: str, action: str) -> dict[str, object]:
     if not args.no_apply:
         apply_report = apply_patch(args)
     else:
@@ -467,15 +556,23 @@ def launch(args: argparse.Namespace) -> dict[str, object]:
         apply_report = {"skipped": True, "wind_dll_state": wind_dll_patch_state(tw_root_for_check / "wind.dll")}
 
     _kr_root, tw_root = resolve_paths(args)
-    exe = tw_root / "WindConfig.exe"
+    exe = tw_root / executable_name
     if not exe.exists():
-        raise SystemExit(f"WindConfig.exe not found: {exe}")
+        raise SystemExit(f"{executable_name} not found: {exe}")
 
     if args.dry_run:
-        return {"action": "launch", "dry_run": True, "would_run": str(exe), "apply": apply_report}
+        return {"action": action, "dry_run": True, "would_run": str(exe), "apply": apply_report}
 
     subprocess.Popen([str(exe)], cwd=str(tw_root))
-    return {"action": "launch", "launched": str(exe), "apply": apply_report}
+    return {"action": action, "launched": str(exe), "apply": apply_report}
+
+
+def launch(args: argparse.Namespace) -> dict[str, object]:
+    return launch_executable(args, "WindConfig.exe", "launch")
+
+
+def launch_win10(args: argparse.Namespace) -> dict[str, object]:
+    return launch_executable(args, "wf_sp_win10.exe", "launch_win10")
 
 
 def print_report(report: dict[str, object]) -> None:
@@ -511,6 +608,9 @@ def build_parser() -> argparse.ArgumentParser:
     p_launch = sub.add_parser("launch", help="apply if needed, then start WindConfig.exe")
     add_common_args(p_launch)
     p_launch.add_argument("--no-apply", action="store_true", help="launch without applying files first")
+    p_launch_win10 = sub.add_parser("launch-win10", help="apply if needed, then start wf_sp_win10.exe directly")
+    add_common_args(p_launch_win10)
+    p_launch_win10.add_argument("--no-apply", action="store_true", help="launch without applying files first")
     return parser
 
 
@@ -531,6 +631,8 @@ def main(argv: list[str] | None = None) -> int:
         report = restore_patch(args)
     elif args.command == "launch":
         report = launch(args)
+    elif args.command == "launch-win10":
+        report = launch_win10(args)
     else:  # pragma: no cover
         raise SystemExit(f"unknown command: {args.command}")
 

@@ -11,7 +11,7 @@ import sys
 import threading
 import traceback
 from pathlib import Path
-from tkinter import END, LEFT, BOTH, X, filedialog, messagebox
+from tkinter import BOTH, END, LEFT, X, filedialog, messagebox
 import tkinter as tk
 from tkinter import ttk
 
@@ -19,16 +19,18 @@ import wftsp_steam_kr_launcher as core
 
 
 APP_TITLE = "Wind Fantasy SP KR -> Steam TW 패치 런처"
+DISPLAY_UNCHANGED = "건드리지 않음"
+DISPLAY_WINDOWED = "창모드"
+DISPLAY_FULLSCREEN = "전체화면"
 
 
-def default_kr_root() -> Path:
-    if getattr(sys, "frozen", False):
-        return Path(sys.executable).resolve().parent
-    return Path(__file__).resolve().parents[1]
+def default_kr_root() -> str:
+    return ""
 
 
-def default_tw_root() -> Path:
-    return default_kr_root() / "Wind Fantasy SP_TW"
+def default_tw_root() -> str:
+    detected = core.detect_steam_wftsp_root()
+    return str(detected) if detected else ""
 
 
 def make_args(
@@ -74,28 +76,31 @@ def compact_apply_summary(report: dict[str, object]) -> dict[str, object]:
 
     wind_dll = report.get("wind_dll", {})
     registry = report.get("registry", {})
-    return {
+    summary: dict[str, object] = {
         "changed_overlay_files": changed_files,
         "source_progression_patches": source_patches,
         "wind_dll": wind_dll,
         "registry": registry,
         "backup_dir": report.get("backup_dir"),
     }
+    if "launch" in report:
+        summary["launch"] = report["launch"]
+    return summary
 
 
 class PatchGui(tk.Tk):
     def __init__(self) -> None:
         super().__init__()
         self.title(APP_TITLE)
-        self.geometry("880x640")
-        self.minsize(760, 520)
+        self.geometry("900x660")
+        self.minsize(790, 540)
 
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.worker: threading.Thread | None = None
 
-        self.kr_path = tk.StringVar(value=str(default_kr_root()))
-        self.tw_path = tk.StringVar(value=str(default_tw_root()))
-        self.display_mode = tk.StringVar(value="건드리지 않음")
+        self.kr_path = tk.StringVar(value=default_kr_root())
+        self.tw_path = tk.StringVar(value=default_tw_root())
+        self.display_mode = tk.StringVar(value=DISPLAY_UNCHANGED)
         self.width_value = tk.StringVar(value="")
         self.height_value = tk.StringVar(value="")
         self.launch_after_apply = tk.BooleanVar(value=False)
@@ -113,9 +118,16 @@ class PatchGui(tk.Tk):
 
         subtitle = ttk.Label(
             root,
-            text="한국어판 폴더에서 필요한 데이터를 읽고, 진행 불가 패치를 메모리에서 반영한 뒤 Steam 대만판 폴더에 적용합니다.",
+            text="기존 한국어판 파일을 읽어 Steam판 Win10 클라이언트에 적용하고, 진행 불가 버그픽스를 함께 반영합니다.",
         )
-        subtitle.pack(anchor="w", pady=(4, 14))
+        subtitle.pack(anchor="w", pady=(4, 4))
+
+        notice = ttk.Label(
+            root,
+            text="패치에는 기존 한국어판의 리소스 파일이 필요합니다. 이 런처와 패치 파일은 게임 리소스를 포함하지 않습니다.",
+            foreground="#8a3d00",
+        )
+        notice.pack(anchor="w", pady=(0, 14))
 
         self._path_row(root, "한국어판 폴더", self.kr_path, self._browse_kr)
         self._path_row(root, "Steam 대만판 폴더", self.tw_path, self._browse_tw)
@@ -127,7 +139,7 @@ class PatchGui(tk.Tk):
         display = ttk.Combobox(
             options,
             textvariable=self.display_mode,
-            values=["건드리지 않음", "창모드", "전체화면"],
+            values=[DISPLAY_UNCHANGED, DISPLAY_WINDOWED, DISPLAY_FULLSCREEN],
             state="readonly",
             width=14,
         )
@@ -137,7 +149,7 @@ class PatchGui(tk.Tk):
         ttk.Entry(options, textvariable=self.width_value, width=7).pack(side=LEFT, padx=(8, 4))
         ttk.Label(options, text="x").pack(side=LEFT)
         ttk.Entry(options, textvariable=self.height_value, width=7).pack(side=LEFT, padx=(4, 16))
-        ttk.Checkbutton(options, text="적용 후 WindConfig 실행", variable=self.launch_after_apply).pack(side=LEFT)
+        ttk.Checkbutton(options, text="적용 후 게임 실행", variable=self.launch_after_apply).pack(side=LEFT)
 
         buttons = ttk.Frame(root)
         buttons.pack(fill=X, pady=(0, 10))
@@ -147,8 +159,10 @@ class PatchGui(tk.Tk):
         self.status_button.pack(side=LEFT, padx=(8, 0))
         self.restore_button = ttk.Button(buttons, text="TW 원본 복구", command=self.restore_patch)
         self.restore_button.pack(side=LEFT, padx=(8, 0))
-        self.launch_button = ttk.Button(buttons, text="WindConfig 실행", command=self.launch_game)
-        self.launch_button.pack(side=LEFT, padx=(8, 0))
+        self.game_button = ttk.Button(buttons, text="게임 실행", command=self.launch_game)
+        self.game_button.pack(side=LEFT, padx=(8, 0))
+        self.config_button = ttk.Button(buttons, text="WindConfig 실행", command=self.launch_config)
+        self.config_button.pack(side=LEFT, padx=(8, 0))
 
         ttk.Label(root, textvariable=self.status_text).pack(anchor="w", pady=(0, 6))
 
@@ -160,7 +174,11 @@ class PatchGui(tk.Tk):
         self.log.pack(side=LEFT, fill=BOTH, expand=True)
         scrollbar.pack(side="right", fill="y")
 
-        self._log("준비 완료. KR 폴더와 Steam TW 폴더를 확인한 뒤 '패치 적용'을 누르면 됩니다.")
+        if self.tw_path.get():
+            self._log(f"Steam판 폴더를 자동으로 찾았습니다: {self.tw_path.get()}")
+        else:
+            self._log("Steam판 폴더를 자동으로 찾지 못했습니다. Steam 대만판 폴더를 직접 선택해 주세요.")
+        self._log("한국어판 폴더는 사용자가 보유한 정식 한국어판 경로를 직접 선택해야 합니다.")
 
     def _path_row(self, parent: ttk.Frame, label: str, variable: tk.StringVar, command) -> None:
         row = ttk.Frame(parent)
@@ -170,20 +188,22 @@ class PatchGui(tk.Tk):
         ttk.Button(row, text="찾기", command=command).pack(side=LEFT)
 
     def _browse_kr(self) -> None:
-        selected = filedialog.askdirectory(title="한국어판 폴더 선택", initialdir=self.kr_path.get())
+        initialdir = self.kr_path.get().strip() or str(Path.home())
+        selected = filedialog.askdirectory(title="한국어판 폴더 선택", initialdir=initialdir)
         if selected:
             self.kr_path.set(selected)
 
     def _browse_tw(self) -> None:
-        selected = filedialog.askdirectory(title="Steam 대만판 폴더 선택", initialdir=self.tw_path.get())
+        initialdir = self.tw_path.get().strip() or str(Path.home())
+        selected = filedialog.askdirectory(title="Steam 대만판 폴더 선택", initialdir=initialdir)
         if selected:
             self.tw_path.set(selected)
 
     def _display_mode_arg(self) -> str | None:
         value = self.display_mode.get()
-        if value == "창모드":
+        if value == DISPLAY_WINDOWED:
             return "windowed"
-        if value == "전체화면":
+        if value == DISPLAY_FULLSCREEN:
             return "fullscreen"
         return None
 
@@ -199,9 +219,23 @@ class PatchGui(tk.Tk):
             raise ValueError(f"{name} 값은 1 이상이어야 합니다.")
         return parsed
 
-    def _args(self, *, dry_run: bool = False, no_apply: bool = False) -> argparse.Namespace:
-        kr_root = Path(self.kr_path.get()).expanduser()
-        tw_root = Path(self.tw_path.get()).expanduser()
+    def _path_from_entry(self, variable: tk.StringVar, label: str, *, required: bool) -> Path:
+        value = variable.get().strip()
+        if value:
+            return Path(value).expanduser()
+        if required:
+            raise ValueError(f"{label}를 선택해 주세요.")
+        return Path.cwd()
+
+    def _args(
+        self,
+        *,
+        dry_run: bool = False,
+        no_apply: bool = False,
+        require_kr: bool = True,
+    ) -> argparse.Namespace:
+        kr_root = self._path_from_entry(self.kr_path, "한국어판 폴더", required=require_kr)
+        tw_root = self._path_from_entry(self.tw_path, "Steam 대만판 폴더", required=True)
         width = self._int_or_none(self.width_value.get(), "가로 해상도")
         height = self._int_or_none(self.height_value.get(), "세로 해상도")
         return make_args(
@@ -216,7 +250,13 @@ class PatchGui(tk.Tk):
 
     def _set_busy(self, busy: bool) -> None:
         state = "disabled" if busy else "normal"
-        for button in [self.apply_button, self.status_button, self.restore_button, self.launch_button]:
+        for button in [
+            self.apply_button,
+            self.status_button,
+            self.restore_button,
+            self.game_button,
+            self.config_button,
+        ]:
             button.configure(state=state)
 
     def _run_worker(self, label: str, fn) -> None:
@@ -281,8 +321,8 @@ class PatchGui(tk.Tk):
             args = self._args()
             report = core.apply_patch(args)
             if self.launch_after_apply.get():
-                launch_args = self._args(no_apply=True)
-                launch_report = core.launch(launch_args)
+                launch_args = self._args(no_apply=True, require_kr=False)
+                launch_report = core.launch_win10(launch_args)
                 report["launch"] = launch_report
             return report
 
@@ -294,10 +334,19 @@ class PatchGui(tk.Tk):
     def restore_patch(self) -> None:
         if not messagebox.askyesno(APP_TITLE, "백업된 TW 원본 파일로 복구할까요?"):
             return
-        self._run_worker("원본 복구 중", lambda: core.restore_patch(self._args()))
+        self._run_worker("원본 복구 중", lambda: core.restore_patch(self._args(require_kr=False)))
 
     def launch_game(self) -> None:
-        self._run_worker("WindConfig 실행 중", lambda: core.launch(self._args(no_apply=True)))
+        self._run_worker(
+            "게임 실행 중",
+            lambda: core.launch_win10(self._args(no_apply=True, require_kr=False)),
+        )
+
+    def launch_config(self) -> None:
+        self._run_worker(
+            "WindConfig 실행 중",
+            lambda: core.launch(self._args(no_apply=True, require_kr=False)),
+        )
 
 
 def main(argv: list[str] | None = None) -> int:

@@ -17,3 +17,8 @@ tooling/*
 !analysis/
 analysis/*
 !analysis/wftsp_steam_kr_patch_notes.md
+
+!tests/
+tests/*
+!tests/__init__.py
+!tests/test_launcher_gui_defaults.py
