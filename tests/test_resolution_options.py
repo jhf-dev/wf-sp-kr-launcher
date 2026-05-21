@@ -60,6 +60,7 @@ class ResolutionOptionsTest(unittest.TestCase):
             self.assertIn("mode=windowed", config_text)
             self.assertIn("input_fix=1", config_text)
             self.assertIn("audio_focus_fix=1", config_text)
+            self.assertIn("inactive_window_spoof=1", config_text)
 
     def test_direct_launch_dry_run_reports_borderless_runtime_files(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:

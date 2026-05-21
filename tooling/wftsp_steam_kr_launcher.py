@@ -442,6 +442,7 @@ def normalize_display_config(
         "debug": 0,
         "input_fix": 1,
         "audio_focus_fix": 1,
+        "inactive_window_spoof": 1,
     }
 
 
@@ -454,6 +455,7 @@ def render_ddraw_config(config: dict[str, int | str]) -> bytes:
         f"debug={config['debug']}",
         f"input_fix={config['input_fix']}",
         f"audio_focus_fix={config['audio_focus_fix']}",
+        f"inactive_window_spoof={config['inactive_window_spoof']}",
         "",
     ]
     return "\n".join(lines).encode("ascii")
@@ -468,7 +470,7 @@ def read_ddraw_config(path: Path) -> dict[str, int | str] | None:
         if not line or line.startswith("[") or "=" not in line:
             continue
         key, value = [part.strip() for part in line.split("=", 1)]
-        if key in {"width", "height", "debug", "input_fix", "audio_focus_fix"}:
+        if key in {"width", "height", "debug", "input_fix", "audio_focus_fix", "inactive_window_spoof"}:
             try:
                 values[key] = int(value)
             except ValueError:

@@ -134,6 +134,13 @@ breaking normal music changes or end-of-track looping, the proxy subclasses the
 game window, records focus-return time, and rewrites only those play-from-zero
 commands issued within a short focus-resume window.
 
+Static analysis of the game window procedure showed that `WM_ACTIVATEAPP`
+performs exclusive-fullscreen behavior: on deactivate it calls
+`ShowWindow(hwnd, SW_SHOWMINNOACTIVE)` and stops BGM, and on activate it restores
+the window and restarts BGM from the beginning. The proxy suppresses that
+message path only in scaled `windowed`/`borderless` modes via
+`inactive_window_spoof=1`; `fullscreen` mode leaves the original handling intact.
+
 ## Current Applied State
 
 After `python tooling\wftsp_steam_kr_launcher.py apply`:

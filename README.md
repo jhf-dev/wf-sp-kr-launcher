@@ -55,7 +55,9 @@ Steam Win10 실행 파일은 `WindConfig`의 레지스트리 해상도 값을 �
 
 창모드/전체 창 모드에서는 포커스 복귀 후 커서 좌표가 어긋나는 문제를 줄이기 위해 `SetCursorPos`/`ClipCursor` 좌표를 640x480 논리 좌표에서 실제 창 좌표로 변환합니다. 또한 포커스 복귀 직후 MCI BGM이 처음부터 다시 재생되는 경우를 줄이기 위해 짧은 resume 보정을 적용합니다.
 
-이 기능은 기존 게임 리소스를 포함하지 않는 런타임 보조 DLL 방식입니다. 문제가 있으면 GUI의 `TW 원본 복구`로 런처가 만든 `ddraw.dll`/`wftsp_ddraw.ini`도 제거됩니다. 수동으로 끄고 싶을 때는 `wftsp_ddraw.ini`의 `input_fix=0` 또는 `audio_focus_fix=0`을 사용할 수 있습니다.
+창모드/전체 창 모드에서는 원본 exclusive fullscreen용 비활성화 처리도 막습니다. 이 처리는 포커스 이탈 시 자동 최소화와 BGM 재시작을 유발하므로 창 모드에서만 우회하고, 원본 전체화면에서는 그대로 둡니다.
+
+이 기능은 기존 게임 리소스를 포함하지 않는 런타임 보조 DLL 방식입니다. 문제가 있으면 GUI의 `TW 원본 복구`로 런처가 만든 `ddraw.dll`/`wftsp_ddraw.ini`도 제거됩니다. 수동으로 끄고 싶을 때는 `wftsp_ddraw.ini`의 `input_fix=0`, `audio_focus_fix=0`, `inactive_window_spoof=0`을 사용할 수 있습니다.
 
 ## 원본 보존
 

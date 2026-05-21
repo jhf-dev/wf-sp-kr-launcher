@@ -14,6 +14,7 @@ struct RuntimeConfig {
     BOOL debug;
     BOOL input_fix;
     BOOL audio_focus_fix;
+    BOOL inactive_window_spoof;
 };
 
 struct DDProxy;
@@ -99,6 +100,7 @@ static RuntimeConfig load_config() {
     config.debug = FALSE;
     config.input_fix = TRUE;
     config.audio_focus_fix = TRUE;
+    config.inactive_window_spoof = TRUE;
 
     char dir[MAX_PATH];
     char ini[MAX_PATH];
@@ -111,6 +113,7 @@ static RuntimeConfig load_config() {
     config.debug = GetPrivateProfileIntA("wftsp_ddraw", "debug", 0, ini) != 0;
     config.input_fix = GetPrivateProfileIntA("wftsp_ddraw", "input_fix", 1, ini) != 0;
     config.audio_focus_fix = GetPrivateProfileIntA("wftsp_ddraw", "audio_focus_fix", 1, ini) != 0;
+    config.inactive_window_spoof = GetPrivateProfileIntA("wftsp_ddraw", "inactive_window_spoof", 1, ini) != 0;
     if (config.width < 320) {
         config.width = 640;
     }
@@ -318,16 +321,25 @@ static LRESULT CALLBACK Hook_WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPAR
         if (g_window_active) {
             g_focus_resume_tick = GetTickCount();
         }
+        if (runtime_scaled_mode() && g_config.inactive_window_spoof) {
+            return 0;
+        }
     } else if (msg == WM_ACTIVATE) {
         g_window_active = (LOWORD(wparam) != WA_INACTIVE);
         if (g_window_active) {
             g_focus_resume_tick = GetTickCount();
+        }
+        if (runtime_scaled_mode() && g_config.inactive_window_spoof && LOWORD(wparam) == WA_INACTIVE) {
+            return 0;
         }
     } else if (msg == WM_SETFOCUS) {
         g_window_active = TRUE;
         g_focus_resume_tick = GetTickCount();
     } else if (msg == WM_KILLFOCUS) {
         g_window_active = FALSE;
+        if (runtime_scaled_mode() && g_config.inactive_window_spoof) {
+            return 0;
+        }
     }
     if (g_original_wndproc != NULL) {
         return CallWindowProcA(g_original_wndproc, hwnd, msg, wparam, lparam);
