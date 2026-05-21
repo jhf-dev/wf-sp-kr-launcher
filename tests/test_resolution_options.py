@@ -25,6 +25,13 @@ def write_target_layout(root: Path) -> None:
 
 
 class ResolutionOptionsTest(unittest.TestCase):
+    def test_directdraw_proxy_keeps_scaled_windows_non_topmost(self) -> None:
+        source = (ROOT / "tooling" / "runtime" / "ddraw_proxy.cpp").read_text(encoding="utf-8")
+
+        self.assertIn("HWND_NOTOPMOST", source)
+        self.assertIn("ensure_not_topmost", source)
+        self.assertNotIn("HWND_TOP,", source)
+
     def test_direct_launch_installs_windowed_directdraw_runtime_without_registry(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)

@@ -140,6 +140,10 @@ performs exclusive-fullscreen behavior: on deactivate it calls
 the window and restarts BGM from the beginning. The proxy suppresses that
 message path only in scaled `windowed`/`borderless` modes via
 `inactive_window_spoof=1`; `fullscreen` mode leaves the original handling intact.
+The scaled modes also explicitly avoid topmost placement: borderless and windowed
+configuration uses `HWND_NOTOPMOST`, clears any stray `WS_EX_TOPMOST` style, and
+keeps owner z-order stable so the game does not behave like an always-on-top
+window while the focus workaround is active.
 
 ## Current Applied State
 

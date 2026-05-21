@@ -364,6 +364,22 @@ static void subclass_game_window(HWND hwnd) {
     g_original_wndproc = reinterpret_cast<WNDPROC>(SetWindowLongPtrA(hwnd, GWLP_WNDPROC, reinterpret_cast<LONG_PTR>(Hook_WindowProc)));
 }
 
+static void ensure_not_topmost(HWND hwnd) {
+    LONG_PTR ex_style = GetWindowLongPtrA(hwnd, GWL_EXSTYLE);
+    if ((ex_style & WS_EX_TOPMOST) != 0) {
+        SetWindowLongPtrA(hwnd, GWL_EXSTYLE, ex_style & ~WS_EX_TOPMOST);
+    }
+    SetWindowPos(
+        hwnd,
+        HWND_NOTOPMOST,
+        0,
+        0,
+        0,
+        0,
+        SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_NOOWNERZORDER
+    );
+}
+
 static void configure_window(DDProxy *proxy) {
     if (proxy->hwnd == NULL || !scaled_mode(proxy->config)) {
         return;
@@ -379,12 +395,12 @@ static void configure_window(DDProxy *proxy) {
         SetWindowLongPtrA(proxy->hwnd, GWL_EXSTYLE, 0);
         SetWindowPos(
             proxy->hwnd,
-            HWND_TOP,
+            HWND_NOTOPMOST,
             info.rcMonitor.left,
             info.rcMonitor.top,
             info.rcMonitor.right - info.rcMonitor.left,
             info.rcMonitor.bottom - info.rcMonitor.top,
-            SWP_FRAMECHANGED | SWP_SHOWWINDOW
+            SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOOWNERZORDER
         );
     } else {
         RECT rect = {0, 0, proxy->config.width, proxy->config.height};
@@ -395,14 +411,15 @@ static void configure_window(DDProxy *proxy) {
         SetWindowLongPtrA(proxy->hwnd, GWL_EXSTYLE, ex_style);
         SetWindowPos(
             proxy->hwnd,
-            NULL,
+            HWND_NOTOPMOST,
             CW_USEDEFAULT,
             CW_USEDEFAULT,
             rect.right - rect.left,
             rect.bottom - rect.top,
-            SWP_NOMOVE | SWP_NOZORDER | SWP_FRAMECHANGED | SWP_SHOWWINDOW
+            SWP_NOMOVE | SWP_FRAMECHANGED | SWP_SHOWWINDOW | SWP_NOOWNERZORDER
         );
     }
+    ensure_not_topmost(proxy->hwnd);
 }
 
 static RECT client_rect_screen(HWND hwnd) {
