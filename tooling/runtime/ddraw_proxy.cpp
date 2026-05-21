@@ -270,16 +270,53 @@ static void attach_window_clipper(DDProxy *proxy, IDirectDrawSurface *surface) {
     clipper->lpVtbl->Release(clipper);
 }
 
+static void set_rgb565_pixel_format(DDPIXELFORMAT *format) {
+    ZeroMemory(format, sizeof(*format));
+    format->dwSize = sizeof(*format);
+    format->dwFlags = DDPF_RGB;
+    format->dwRGBBitCount = 16;
+    format->dwRBitMask = 0xF800;
+    format->dwGBitMask = 0x07E0;
+    format->dwBBitMask = 0x001F;
+}
+
+static BOOL should_force_16bit_offscreen(DDProxy *proxy, const DDSURFACEDESC *desc, BOOL primary) {
+    if (desc == NULL || primary || !scaled_mode(proxy->config)) {
+        return FALSE;
+    }
+    if ((desc->dwFlags & (DDSD_WIDTH | DDSD_HEIGHT)) != (DDSD_WIDTH | DDSD_HEIGHT)) {
+        return FALSE;
+    }
+    if ((desc->dwFlags & DDSD_PIXELFORMAT) != 0 && desc->ddpfPixelFormat.dwRGBBitCount == 16) {
+        return FALSE;
+    }
+    return TRUE;
+}
+
 static HRESULT STDMETHODCALLTYPE DD_CreateSurface(IDirectDraw *self, LPDDSURFACEDESC desc, LPDIRECTDRAWSURFACE *surface, IUnknown *outer) {
     DDProxy *proxy = as_dd(self);
-    IDirectDrawSurface *real_surface = NULL;
-    HRESULT hr = proxy->real->lpVtbl->CreateSurface(proxy->real, desc, &real_surface, outer);
-    if (FAILED(hr) || surface == NULL || real_surface == NULL) {
-        return hr;
-    }
     BOOL primary = FALSE;
     if (desc != NULL && (desc->dwFlags & DDSD_CAPS) != 0) {
         primary = (desc->ddsCaps.dwCaps & DDSCAPS_PRIMARYSURFACE) != 0;
+    }
+    DDSURFACEDESC adjusted_desc;
+    LPDDSURFACEDESC create_desc = desc;
+    BOOL adjusted_to_16bit = should_force_16bit_offscreen(proxy, desc, primary);
+    if (adjusted_to_16bit) {
+        adjusted_desc = *desc;
+        adjusted_desc.dwFlags |= DDSD_PIXELFORMAT;
+        set_rgb565_pixel_format(&adjusted_desc.ddpfPixelFormat);
+        create_desc = &adjusted_desc;
+    }
+
+    IDirectDrawSurface *real_surface = NULL;
+    HRESULT hr = proxy->real->lpVtbl->CreateSurface(proxy->real, create_desc, &real_surface, outer);
+    if (FAILED(hr) && adjusted_to_16bit) {
+        real_surface = NULL;
+        hr = proxy->real->lpVtbl->CreateSurface(proxy->real, desc, &real_surface, outer);
+    }
+    if (FAILED(hr) || surface == NULL || real_surface == NULL) {
+        return hr;
     }
     if (primary) {
         attach_window_clipper(proxy, real_surface);

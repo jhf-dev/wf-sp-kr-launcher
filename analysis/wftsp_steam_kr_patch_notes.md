@@ -116,8 +116,11 @@ Supported through `payload/ddraw.dll` plus `wftsp_ddraw.ini`:
 
 `windowed` and `borderless` force `DDSCL_NORMAL`, skip `SetDisplayMode`, adjust
 the game window style, and scale the original 640x480 blit into the target
-client area. `fullscreen` keeps the proxy installed but passes the original
-DirectDraw exclusive path through.
+client area. The proxy also forces non-primary 640x480 offscreen surfaces to
+RGB565 16bpp in scaled modes, because the game locks those surfaces and writes
+`ushort` pixels directly after checking the surface `RBitMask`. `fullscreen`
+keeps the proxy installed but passes the original DirectDraw exclusive path
+through.
 
 ## Current Applied State
 
