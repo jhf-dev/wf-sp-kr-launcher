@@ -11,8 +11,16 @@
 tooling/*
 !tooling/wftsp_dialogue_pointer_patch.py
 !tooling/wftsp_fy_city_exit_patch.py
+!tooling/build_ddraw_proxy.py
+!tooling/runtime/
+tooling/runtime/*
+!tooling/runtime/ddraw_proxy.cpp
 !tooling/wftsp_steam_kr_launcher.py
 !tooling/wftsp_steam_kr_patch_gui.py
+
+!payload/
+payload/*
+!payload/ddraw.dll
 
 !analysis/
 analysis/*

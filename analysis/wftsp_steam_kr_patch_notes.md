@@ -62,7 +62,7 @@ untouched.
 
 Commands:
 
-- `status`: report overlay, `wind.dll` CP state, registry state, and Steam string indicators.
+- `status`: report overlay, `wind.dll` CP state, DirectDraw runtime state, observed WindConfig registry values, and Steam string indicators.
 - `apply`: back up original TW files, copy KR overlay, patch `wind.dll` to CP949.
 - `restore`: restore backed-up TW files.
 - `launch`: apply if needed, then start `WindConfig.exe`.
@@ -93,21 +93,31 @@ does not need to already contain the ending/dialogue or FY-castle fixes.
 
 ## Display Options
 
-Supported through `WindConfig` registry:
+`WindConfig.exe` stores `IsFullscreen`, `CreationWidth`, and `CreationHeight`
+under `HKCU\WindSP`, but runtime testing showed the Steam Win10 game still
+enters a fixed 640x480 exclusive DirectDraw path. Static analysis of
+`wf_sp_win10.exe` confirms the relevant setup:
+
+- imports `DirectDrawCreate` from `DDRAW.dll`
+- calls `SetCooperativeLevel(hwnd, 0x11)`
+- calls `SetDisplayMode(640, 480, 16)`
+- presents with primary-surface `BltFast`
+
+The launcher therefore uses a local `ddraw.dll` proxy instead of relying on the
+WindConfig registry for display changes.
+
+Supported through `payload/ddraw.dll` plus `wftsp_ddraw.ini`:
 
 - `--display-mode fullscreen`
 - `--display-mode windowed`
+- `--display-mode borderless`
 - `--width <pixels>`
 - `--height <pixels>`
 
-Deferred:
-
-- `--display-mode borderless`
-
-`WindConfig.exe` exposes fullscreen/windowed and resolution registry values, but
-no static evidence was found for a borderless-window style toggle. Borderless
-should be implemented later through a runtime window-style hook or a D3D/window
-proxy if needed.
+`windowed` and `borderless` force `DDSCL_NORMAL`, skip `SetDisplayMode`, adjust
+the game window style, and scale the original 640x480 blit into the target
+client area. `fullscreen` keeps the proxy installed but passes the original
+DirectDraw exclusive path through.
 
 ## Current Applied State
 

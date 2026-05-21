@@ -14,7 +14,7 @@
 - Steam Win10판 `wind.dll`의 CP936 출력 보정을 CP949로 패치
 - Steam 대만판 원본 파일 자동 백업 및 복구
 - `wf_sp_win10.exe` 직접 실행 버튼 제공
-- 창모드/전체화면 및 해상도 설정을 게임 실행 전에 반영
+- 창모드/전체 창 모드(borderless) 및 해상도 설정을 DirectDraw 프록시로 반영
 - 선택적으로 `WindConfig.exe` 실행
 
 ## 다운로드/실행
@@ -40,12 +40,20 @@ WFTSP_KR_Steam_Patch_GUI.exe
 
 ## 화면 설정
 
-런처의 화면 모드와 해상도 입력값은 `패치 적용` 또는 `게임 실행` 시점에 `HKCU\WindSP` 레지스트리 설정으로 기록됩니다.
+Steam Win10 실행 파일은 `WindConfig`의 레지스트리 해상도 값을 실제 렌더링 경로에 반영하지 않고, `wf_sp_win10.exe` 내부에서 DirectDraw exclusive 640x480 모드를 직접 설정하는 것으로 확인했습니다.
 
-- 화면 모드: `IsFullscreen`
-- 해상도: `CreationWidth`, `CreationHeight`
+그래서 런처의 화면 모드와 해상도 입력값은 대상 Steam 폴더에 다음 런타임 파일을 설치하는 방식으로 반영합니다.
 
-대만판 Win10 클라이언트가 원래 읽는 설정 경로를 그대로 사용합니다. Borderless 전환은 현재 포함하지 않았습니다.
+- `ddraw.dll`: 32비트 DirectDraw 프록시
+- `wftsp_ddraw.ini`: `windowed`, `borderless`, `fullscreen` 모드와 출력 크기 설정
+
+지원 상태:
+
+- `창모드`: 640x480 게임 화면을 지정한 창 크기로 스케일링합니다.
+- `전체 창 모드`: 현재 모니터 크기에 맞춘 borderless 창으로 전환합니다.
+- `전체화면`: 프록시는 로드되지만 원본 DirectDraw 전체화면 경로를 그대로 통과시킵니다.
+
+이 기능은 기존 게임 리소스를 포함하지 않는 런타임 보조 DLL 방식입니다. 문제가 있으면 GUI의 `TW 원본 복구`로 런처가 만든 `ddraw.dll`/`wftsp_ddraw.ini`도 제거됩니다.
 
 ## 원본 보존
 
@@ -119,6 +127,12 @@ python tooling\wftsp_steam_kr_launcher.py launch-win10 --no-apply --tw-root <TW�
 python tooling\wftsp_steam_kr_launcher.py launch-win10 --no-apply --tw-root <TW폴더> --display-mode windowed --width 1280 --height 720
 ```
 
+전체 창 모드 실행:
+
+```powershell
+python tooling\wftsp_steam_kr_launcher.py launch-win10 --no-apply --tw-root <TW폴더> --display-mode borderless
+```
+
 원본 복구:
 
 ```powershell
@@ -128,10 +142,11 @@ python tooling\wftsp_steam_kr_launcher.py restore --tw-root <TW폴더>
 standalone exe 빌드:
 
 ```powershell
+python tooling\build_ddraw_proxy.py
 python -m PyInstaller --noconfirm --clean --noconsole --onefile --name WFTSP_KR_Steam_Patch_GUI --paths tooling tooling\wftsp_steam_kr_patch_gui.py
 ```
 
-빌드 결과는 `dist\WFTSP_KR_Steam_Patch_GUI.exe`에 생성됩니다.
+빌드 결과는 `dist\WFTSP_KR_Steam_Patch_GUI.exe`에 생성됩니다. 배포 패키지에는 exe와 함께 `payload\ddraw.dll`도 포함되어야 합니다.
 
 ## 포함 파일
 
@@ -139,6 +154,9 @@ python -m PyInstaller --noconfirm --clean --noconsole --onefile --name WFTSP_KR_
 - `WFTSP_KR_Steam_Patch_GUI.cmd`: exe 실행 편의 래퍼
 - `tooling/wftsp_steam_kr_patch_gui.py`: GUI 코드
 - `tooling/wftsp_steam_kr_launcher.py`: 패치 적용/복구/실행 핵심 로직
+- `tooling/runtime/ddraw_proxy.cpp`: 창모드/전체 창 모드용 DirectDraw 프록시
+- `tooling/build_ddraw_proxy.py`: `payload/ddraw.dll` 빌드 스크립트
 - `tooling/wftsp_dialogue_pointer_patch.py`: 후반부/엔딩 진행 불가 보정 로직
 - `tooling/wftsp_fy_city_exit_patch.py`: FY성 나가기 보정 로직
+- `payload/ddraw.dll`: 런처가 Steam판 폴더에 복사하는 DirectDraw 프록시
 - `analysis/wftsp_steam_kr_patch_notes.md`: 분석 메모

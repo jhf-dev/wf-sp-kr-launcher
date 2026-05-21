@@ -68,6 +68,13 @@ class LauncherGuiDefaultsTest(unittest.TestCase):
             self.assertEqual("wf_sp_win10.exe", Path(report["would_run"]).name)
             self.assertEqual("launch_win10", report["action"])
 
+    def test_gui_maps_borderless_display_mode_to_core_argument(self) -> None:
+        app = gui.PatchGui.__new__(gui.PatchGui)
+        app.display_mode = mock.Mock()
+        app.display_mode.get.return_value = gui.DISPLAY_BORDERLESS
+
+        self.assertEqual("borderless", app._display_mode_arg())
+
 
 if __name__ == "__main__":
     unittest.main()

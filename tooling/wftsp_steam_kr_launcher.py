@@ -74,10 +74,9 @@ WIND_DLL_CP949_PATCHES = [
 ]
 
 WINDSP_REGISTRY_KEY = "WindSP"
-REGISTRY_VALUES = {
-    "fullscreen": {"IsFullscreen": 1},
-    "windowed": {"IsFullscreen": 0},
-}
+
+DDRAW_RUNTIME_FILES = ("ddraw.dll", "wftsp_ddraw.ini")
+DDRAW_CONFIG_SECTION = "wftsp_ddraw"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -140,6 +139,10 @@ def repo_root_from_script() -> Path:
     if getattr(sys, "frozen", False):
         return Path(sys.executable).resolve().parent
     return Path(__file__).resolve().parents[1]
+
+
+def ddraw_payload_path() -> Path:
+    return repo_root_from_script() / "payload" / "ddraw.dll"
 
 
 def resolve_paths(args: argparse.Namespace) -> tuple[Path, Path]:
@@ -421,39 +424,137 @@ def registry_status() -> dict[str, object]:
     return values
 
 
-def set_registry_options(
+def normalize_display_config(
+    display_mode: str | None,
+    width: int | None,
+    height: int | None,
+) -> dict[str, int | str] | None:
+    if display_mode is None and width is None and height is None:
+        return None
+    if display_mode is None:
+        raise SystemExit("--width/--height require --display-mode")
+    if display_mode not in {"fullscreen", "windowed", "borderless"}:
+        raise SystemExit(f"unsupported display mode: {display_mode}")
+    return {
+        "mode": display_mode,
+        "width": width if width is not None else 640,
+        "height": height if height is not None else 480,
+        "debug": 0,
+    }
+
+
+def render_ddraw_config(config: dict[str, int | str]) -> bytes:
+    lines = [
+        f"[{DDRAW_CONFIG_SECTION}]",
+        f"mode={config['mode']}",
+        f"width={config['width']}",
+        f"height={config['height']}",
+        f"debug={config['debug']}",
+        "",
+    ]
+    return "\n".join(lines).encode("ascii")
+
+
+def read_ddraw_config(path: Path) -> dict[str, int | str] | None:
+    if not path.exists():
+        return None
+    values: dict[str, int | str] = {}
+    for raw_line in path.read_text(encoding="ascii", errors="replace").splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("[") or "=" not in line:
+            continue
+        key, value = [part.strip() for part in line.split("=", 1)]
+        if key in {"width", "height", "debug"}:
+            try:
+                values[key] = int(value)
+            except ValueError:
+                values[key] = value
+        elif key == "mode":
+            values[key] = value
+    return values
+
+
+def runtime_file_report(
+    tw_root: Path,
+    relative_path: str,
+    desired_data: bytes,
+    dry_run: bool,
+) -> dict[str, object]:
+    target = tw_root / relative_path
+    target_exists_before = target.exists()
+    target_hash_before = sha256_file(target) if target_exists_before else None
+    desired_hash = sha256_bytes(desired_data)
+    changed = target_hash_before != desired_hash
+    if changed and not dry_run:
+        if target_exists_before:
+            backup_file_once(tw_root, relative_path)
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(desired_data)
+    return {
+        "path": relative_path,
+        "changed": changed,
+        "target_exists_before": target_exists_before,
+        "target_sha256_before": target_hash_before,
+        "target_sha256_after": desired_hash if changed and not dry_run else target_hash_before,
+        "desired_sha256": desired_hash,
+        "size": len(desired_data),
+    }
+
+
+def install_display_runtime(
+    tw_root: Path,
     display_mode: str | None,
     width: int | None,
     height: int | None,
     dry_run: bool,
 ) -> dict[str, object]:
-    if display_mode is None and width is None and height is None:
-        return {"changed": False, "reason": "no display options requested"}
-    if winreg is None:
-        raise SystemExit("winreg is unavailable; cannot write WindConfig registry settings")
-    if display_mode == "borderless":
-        return {
-            "changed": False,
-            "deferred": True,
-            "reason": "WindConfig exposes fullscreen/windowed registry values, not borderless window style.",
-        }
+    config = normalize_display_config(display_mode, width, height)
+    if config is None:
+        return {"changed": False, "supported": True, "reason": "no display runtime options requested"}
 
-    changed: dict[str, int] = {}
-    planned: dict[str, int] = {}
-    if display_mode in REGISTRY_VALUES:
-        planned.update(REGISTRY_VALUES[display_mode])
-    if width is not None:
-        planned["CreationWidth"] = width
-    if height is not None:
-        planned["CreationHeight"] = height
-    if dry_run:
-        return {"changed": bool(planned), "dry_run": True, "values": planned, "key": f"HKCU\\{WINDSP_REGISTRY_KEY}"}
+    payload = ddraw_payload_path()
+    if not payload.exists():
+        raise SystemExit(
+            f"DirectDraw runtime payload is missing: {payload}. "
+            "Build it with tooling\\build_ddraw_proxy.py before using display options."
+        )
 
-    with winreg.CreateKey(winreg.HKEY_CURRENT_USER, WINDSP_REGISTRY_KEY) as key:
-        for name, value in planned.items():
-            winreg.SetValueEx(key, name, 0, winreg.REG_DWORD, value)
-            changed[name] = value
-    return {"changed": bool(changed), "values": changed, "key": f"HKCU\\{WINDSP_REGISTRY_KEY}"}
+    dll_data = payload.read_bytes()
+    config_data = render_ddraw_config(config)
+    file_reports = [
+        runtime_file_report(tw_root, "ddraw.dll", dll_data, dry_run),
+        runtime_file_report(tw_root, "wftsp_ddraw.ini", config_data, dry_run),
+    ]
+    return {
+        "changed": any(bool(item["changed"]) for item in file_reports),
+        "supported": True,
+        "dry_run": dry_run,
+        "payload": str(payload),
+        "config": config,
+        "files": file_reports,
+    }
+
+
+def display_runtime_status(tw_root: Path) -> dict[str, object]:
+    payload = ddraw_payload_path()
+    target_dll = tw_root / "ddraw.dll"
+    target_config = tw_root / "wftsp_ddraw.ini"
+    payload_hash = sha256_file(payload) if payload.exists() else None
+    target_hash = sha256_file(target_dll) if target_dll.exists() else None
+    return {
+        "payload": str(payload),
+        "payload_exists": payload.exists(),
+        "payload_sha256": payload_hash,
+        "ddraw_dll": {
+            "exists": target_dll.exists(),
+            "sha256": target_hash,
+            "matches_payload": (payload_hash == target_hash) if payload_hash and target_hash else None,
+        },
+        "config": {
+            "exists": target_config.exists(),
+            "values": read_ddraw_config(target_config),
+        },
+    }
 
 
 def scan_steam_indicators(tw_root: Path) -> dict[str, object]:
@@ -489,7 +590,13 @@ def apply_patch(args: argparse.Namespace) -> dict[str, object]:
         for relative_path in KR_OVERLAY_FILES
     ]
     wind_report = patch_wind_dll(tw_root, dry_run=args.dry_run)
-    reg_report = set_registry_options(args.display_mode, args.width, args.height, dry_run=args.dry_run)
+    display_report = install_display_runtime(
+        tw_root,
+        args.display_mode,
+        args.width,
+        args.height,
+        dry_run=args.dry_run,
+    )
 
     report: dict[str, object] = {
         "action": "apply",
@@ -498,7 +605,7 @@ def apply_patch(args: argparse.Namespace) -> dict[str, object]:
         "tw_root": str(tw_root),
         "overlay": overlay_reports,
         "wind_dll": wind_report,
-        "registry": reg_report,
+        "display_runtime": display_report,
         "compatible_files": [dataclasses.asdict(item) for item in overlay_status(kr_root, tw_root, COMPATIBILITY_CHECK_FILES)],
         "steam_indicators": scan_steam_indicators(tw_root),
         "backup_dir": str(tw_root / BACKUP_DIR_NAME),
@@ -515,6 +622,8 @@ def restore_patch(args: argparse.Namespace) -> dict[str, object]:
         raise SystemExit(f"backup directory does not exist: {backup_root}")
 
     restored: list[str] = []
+    removed_created_runtime: list[str] = []
+    skipped_created_runtime: list[dict[str, object]] = []
     for backup in backup_root.rglob("*"):
         if not backup.is_file() or backup.name == STATE_FILE_NAME:
             continue
@@ -525,7 +634,48 @@ def restore_patch(args: argparse.Namespace) -> dict[str, object]:
             shutil.copy2(backup, target)
         restored.append(relative_path)
 
-    return {"action": "restore", "dry_run": args.dry_run, "tw_root": str(tw_root), "restored": sorted(restored)}
+    state_file = state_path(tw_root)
+    if state_file.exists():
+        state = json.loads(state_file.read_text(encoding="utf-8"))
+        runtime_report = state.get("display_runtime") if isinstance(state, dict) else None
+        if not runtime_report and isinstance(state, dict) and state.get("action") == "display_runtime":
+            runtime_report = state
+        if isinstance(runtime_report, dict):
+            for item in runtime_report.get("files", []):
+                if not isinstance(item, dict):
+                    continue
+                relative_path = str(item.get("path", ""))
+                if relative_path not in DDRAW_RUNTIME_FILES or relative_path in restored:
+                    continue
+                if item.get("target_exists_before"):
+                    continue
+                target = tw_root / relative_path
+                if not target.exists():
+                    continue
+                expected_hash = item.get("target_sha256_after") or item.get("desired_sha256")
+                current_hash = sha256_file(target)
+                if expected_hash and current_hash != expected_hash:
+                    skipped_created_runtime.append(
+                        {
+                            "path": relative_path,
+                            "reason": "current file differs from launcher-created runtime file",
+                            "current_sha256": current_hash,
+                            "expected_sha256": expected_hash,
+                        }
+                    )
+                    continue
+                if not args.dry_run:
+                    target.unlink()
+                removed_created_runtime.append(relative_path)
+
+    return {
+        "action": "restore",
+        "dry_run": args.dry_run,
+        "tw_root": str(tw_root),
+        "restored": sorted(restored),
+        "removed_created_runtime": sorted(removed_created_runtime),
+        "skipped_created_runtime": skipped_created_runtime,
+    }
 
 
 def status(args: argparse.Namespace) -> dict[str, object]:
@@ -542,7 +692,8 @@ def status(args: argparse.Namespace) -> dict[str, object]:
             "sha256": sha256_file(tw_root / "wind.dll"),
             "expected_tw_original_sha256": EXPECTED_TW_WIND_DLL_SHA256,
         },
-        "registry": registry_status(),
+        "display_runtime": display_runtime_status(tw_root),
+        "windconfig_registry_observed": registry_status(),
         "steam_indicators": scan_steam_indicators(tw_root),
         "backup_dir_exists": (tw_root / BACKUP_DIR_NAME).exists(),
     }
@@ -556,11 +707,27 @@ def launch_executable(args: argparse.Namespace, executable_name: str, action: st
 
     if not args.no_apply:
         apply_report = apply_patch(args)
-        registry_report = apply_report.get("registry", {"changed": False})
+        display_report = apply_report.get("display_runtime", {"changed": False})
     else:
         _kr_root, tw_root_for_check = resolve_paths(args)
         apply_report = {"skipped": True, "wind_dll_state": wind_dll_patch_state(tw_root_for_check / "wind.dll")}
-        registry_report = set_registry_options(args.display_mode, args.width, args.height, dry_run=args.dry_run)
+        display_report = install_display_runtime(
+            tw_root_for_check,
+            args.display_mode,
+            args.width,
+            args.height,
+            dry_run=args.dry_run,
+        )
+        if display_report.get("changed") and not args.dry_run:
+            write_state(
+                tw_root_for_check,
+                {
+                    "action": "display_runtime",
+                    "dry_run": False,
+                    "tw_root": str(tw_root_for_check),
+                    **display_report,
+                },
+            )
 
     if args.dry_run:
         return {
@@ -568,11 +735,11 @@ def launch_executable(args: argparse.Namespace, executable_name: str, action: st
             "dry_run": True,
             "would_run": str(exe),
             "apply": apply_report,
-            "registry": registry_report,
+            "display_runtime": display_report,
         }
 
     subprocess.Popen([str(exe)], cwd=str(tw_root))
-    return {"action": action, "launched": str(exe), "apply": apply_report, "registry": registry_report}
+    return {"action": action, "launched": str(exe), "apply": apply_report, "display_runtime": display_report}
 
 
 def launch(args: argparse.Namespace) -> dict[str, object]:
@@ -593,10 +760,10 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument(
         "--display-mode",
         choices=["fullscreen", "windowed", "borderless"],
-        help="write WindConfig display mode before launch/apply",
+        help="install DirectDraw runtime mode before launch/apply",
     )
-    parser.add_argument("--width", type=int, help="write WindConfig CreationWidth")
-    parser.add_argument("--height", type=int, help="write WindConfig CreationHeight")
+    parser.add_argument("--width", type=int, help="windowed DirectDraw output width")
+    parser.add_argument("--height", type=int, help="windowed DirectDraw output height")
     parser.add_argument("--dry-run", action="store_true", help="report changes without writing files")
 
 
@@ -604,7 +771,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description=__doc__)
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p_status = sub.add_parser("status", help="show overlay, locale shim, registry, and Steam indicators")
+    p_status = sub.add_parser("status", help="show overlay, locale shim, display runtime, and Steam indicators")
     add_common_args(p_status)
 
     p_apply = sub.add_parser("apply", help="apply KR overlay and CP949 wind.dll patch")

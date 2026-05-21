@@ -27,11 +27,13 @@ Wind Fantasy SP KR -> Steam TW 패치 런처
   - FY성 나가기 man 버그픽스 자동 반영
   - Steam Win10판 wind.dll의 CP936 출력 보정을 CP949로 변경
   - 게임 실행 버튼은 WindConfig를 거치지 않고 wf_sp_win10.exe를 직접 실행
-  - 화면 모드와 해상도는 게임 실행 전 HKCU\WindSP 설정으로 반영
+  - 화면 모드와 해상도는 게임 폴더의 ddraw.dll 프록시와 wftsp_ddraw.ini로 반영
+  - 창모드, 전체 창 모드(borderless), 원본 전체화면 모드를 선택 가능
 
 주의:
   - 패치 적용 전 게임과 WindConfig를 종료하세요.
   - 한국어판 원본 폴더는 수정하지 않습니다.
   - Steam 대만판 원본 파일은 _wftsp_kr_patch_backup 폴더에 백업합니다.
   - 문제가 있으면 GUI의 TW 원본 복구 버튼을 사용할 수 있습니다.
+  - 화면 옵션이 문제를 일으키면 TW 원본 복구로 런처가 만든 ddraw.dll/wftsp_ddraw.ini도 제거됩니다.
   - Windows 보안 또는 백신이 런처 실행을 막으면 패치 적용 중에만 차단을 해제하고, 적용 후 원래 설정으로 되돌리세요.

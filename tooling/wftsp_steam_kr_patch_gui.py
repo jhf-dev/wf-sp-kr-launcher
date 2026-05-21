@@ -21,6 +21,7 @@ import wftsp_steam_kr_launcher as core
 APP_TITLE = "Wind Fantasy SP KR -> Steam TW 패치 런처"
 DISPLAY_UNCHANGED = "건드리지 않음"
 DISPLAY_WINDOWED = "창모드"
+DISPLAY_BORDERLESS = "전체 창 모드"
 DISPLAY_FULLSCREEN = "전체화면"
 
 
@@ -75,12 +76,12 @@ def compact_apply_summary(report: dict[str, object]) -> dict[str, object]:
                 )
 
     wind_dll = report.get("wind_dll", {})
-    registry = report.get("registry", {})
+    display_runtime = report.get("display_runtime", {})
     summary: dict[str, object] = {
         "changed_overlay_files": changed_files,
         "source_progression_patches": source_patches,
         "wind_dll": wind_dll,
-        "registry": registry,
+        "display_runtime": display_runtime,
         "backup_dir": report.get("backup_dir"),
     }
     if "launch" in report:
@@ -118,7 +119,7 @@ class PatchGui(tk.Tk):
 
         subtitle = ttk.Label(
             root,
-            text="기존 한국어판 파일을 읽어 Steam판 Win10 클라이언트에 적용하고, 진행 불가 버그픽스를 함께 반영합니다.",
+            text="기존 한국어판 파일을 읽어 Steam판 Win10 클라이언트에 적용하고, 진행 불가 버그픽스와 실행 표시 옵션을 함께 반영합니다.",
         )
         subtitle.pack(anchor="w", pady=(4, 4))
 
@@ -139,7 +140,7 @@ class PatchGui(tk.Tk):
         display = ttk.Combobox(
             options,
             textvariable=self.display_mode,
-            values=[DISPLAY_UNCHANGED, DISPLAY_WINDOWED, DISPLAY_FULLSCREEN],
+            values=[DISPLAY_UNCHANGED, DISPLAY_WINDOWED, DISPLAY_BORDERLESS, DISPLAY_FULLSCREEN],
             state="readonly",
             width=14,
         )
@@ -203,6 +204,8 @@ class PatchGui(tk.Tk):
         value = self.display_mode.get()
         if value == DISPLAY_WINDOWED:
             return "windowed"
+        if value == DISPLAY_BORDERLESS:
+            return "borderless"
         if value == DISPLAY_FULLSCREEN:
             return "fullscreen"
         return None
@@ -353,9 +356,13 @@ def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
     if argv == ["--self-test"]:
         # Used by packaging smoke tests. This verifies the bundled interpreter,
-        # tkinter import, and core patch modules without opening a window.
+        # tkinter import, core patch modules, and adjacent runtime payload
+        # without opening a window.
         _ = default_kr_root()
         _ = default_tw_root()
+        payload = core.ddraw_payload_path()
+        if not payload.exists():
+            raise SystemExit(f"DirectDraw runtime payload is missing: {payload}")
         return 0
     app = PatchGui()
     app.mainloop()

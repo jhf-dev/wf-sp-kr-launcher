@@ -17,7 +17,8 @@ if %ERRORLEVEL%==0 (
   ) else (
     echo WFTSP_KR_Steam_Patch_GUI.exe not found.
     echo Use the packaged release that includes the local Python runtime, or rebuild it with:
-    echo python -m PyInstaller --noconsole --onefile --name WFTSP_KR_Steam_Patch_GUI tooling\wftsp_steam_kr_patch_gui.py
+    echo python tooling\build_ddraw_proxy.py
+    echo python -m PyInstaller --noconsole --onefile --name WFTSP_KR_Steam_Patch_GUI --paths tooling tooling\wftsp_steam_kr_patch_gui.py
     pause
     exit /b 1
   )
