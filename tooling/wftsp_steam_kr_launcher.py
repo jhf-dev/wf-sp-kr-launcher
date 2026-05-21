@@ -74,6 +74,13 @@ WIND_DLL_CP949_PATCHES = [
     (0x058E, bytes.fromhex("A8 03 00 00"), bytes.fromhex("B5 03 00 00"), "TextOutA string conversion"),
 ]
 
+# The Steam Win10 TextOutA shim recalculates strlen and overwrites the nCount
+# argument when the game deliberately draws only the first half of a wrapped
+# string. Korean title-menu helper labels rely on that substring length.
+WIND_DLL_TEXTOUT_LENGTH_PATCHES = [
+    (0x0534, bytes.fromhex("89 45 18"), bytes.fromhex("90 90 90"), "TextOutA preserve caller nCount"),
+]
+
 WINDSP_REGISTRY_KEY = "WindSP"
 
 DDRAW_RUNTIME_FILES = ("ddraw.dll", "wftsp_ddraw.ini")
@@ -340,9 +347,22 @@ def copy_overlay_file(kr_root: Path, tw_root: Path, relative_path: str, dry_run:
 
 
 def wind_dll_patch_state(path: Path) -> str:
+    return wind_dll_patch_group_state(path, WIND_DLL_CP949_PATCHES, "cp936", "cp949")
+
+
+def wind_dll_textout_length_patch_state(path: Path) -> str:
+    return wind_dll_patch_group_state(path, WIND_DLL_TEXTOUT_LENGTH_PATCHES, "original", "patched")
+
+
+def wind_dll_patch_group_state(
+    path: Path,
+    patches: list[tuple[int, bytes, bytes, str]],
+    original_name: str,
+    patched_name: str,
+) -> str:
     saw_original = False
     saw_patched = False
-    for offset, original, patched, _label in WIND_DLL_CP949_PATCHES:
+    for offset, original, patched, _label in patches:
         current = read_bytes(path, offset, len(original))
         if current == original:
             saw_original = True
@@ -353,25 +373,32 @@ def wind_dll_patch_state(path: Path) -> str:
     if saw_original and saw_patched:
         return "partial"
     if saw_patched:
-        return "cp949"
-    return "cp936"
+        return patched_name
+    return original_name
 
 
 def patch_wind_dll(tw_root: Path, dry_run: bool) -> dict[str, object]:
     path = tw_root / "wind.dll"
     before_hash = sha256_file(path)
     state_before = wind_dll_patch_state(path)
+    text_length_state_before = wind_dll_textout_length_patch_state(path)
     if state_before == "unexpected":
         raise SystemExit(
             "wind.dll patch offsets do not match the known TW Steam layout; "
             "refusing to patch this DLL."
         )
+    if text_length_state_before == "unexpected":
+        raise SystemExit(
+            "wind.dll TextOutA length patch offsets do not match the known TW Steam layout; "
+            "refusing to patch this DLL."
+        )
 
     changed_offsets: list[dict[str, object]] = []
-    if state_before != "cp949" and not dry_run:
+    needs_patch = state_before != "cp949" or text_length_state_before != "patched"
+    if needs_patch and not dry_run:
         backup_file_once(tw_root, "wind.dll")
         data = bytearray(path.read_bytes())
-        for offset, original, patched, label in WIND_DLL_CP949_PATCHES:
+        for offset, original, patched, label in [*WIND_DLL_CP949_PATCHES, *WIND_DLL_TEXTOUT_LENGTH_PATCHES]:
             current = bytes(data[offset : offset + len(original)])
             if current == original:
                 data[offset : offset + len(original)] = patched
@@ -381,8 +408,8 @@ def patch_wind_dll(tw_root: Path, dry_run: bool) -> dict[str, object]:
             else:
                 raise SystemExit(f"unexpected wind.dll bytes at 0x{offset:X}: {current.hex(' ')}")
         path.write_bytes(bytes(data))
-    elif state_before != "cp949":
-        for offset, original, _patched, label in WIND_DLL_CP949_PATCHES:
+    elif needs_patch:
+        for offset, original, _patched, label in [*WIND_DLL_CP949_PATCHES, *WIND_DLL_TEXTOUT_LENGTH_PATCHES]:
             current = read_bytes(path, offset, len(original))
             if current == original:
                 changed_offsets.append({"offset": f"0x{offset:X}", "label": label})
@@ -392,6 +419,8 @@ def patch_wind_dll(tw_root: Path, dry_run: bool) -> dict[str, object]:
         "path": "wind.dll",
         "state_before": state_before,
         "state_after": wind_dll_patch_state(path),
+        "textout_length_state_before": text_length_state_before,
+        "textout_length_state_after": wind_dll_textout_length_patch_state(path),
         "sha256_before": before_hash,
         "sha256_after": after_hash,
         "expected_tw_original_sha256": EXPECTED_TW_WIND_DLL_SHA256,
@@ -770,6 +799,7 @@ def status(args: argparse.Namespace) -> dict[str, object]:
         "compatible_files": [dataclasses.asdict(item) for item in overlay_status(kr_root, tw_root, COMPATIBILITY_CHECK_FILES)],
         "wind_dll": {
             "state": wind_dll_patch_state(tw_root / "wind.dll"),
+            "textout_length_state": wind_dll_textout_length_patch_state(tw_root / "wind.dll"),
             "sha256": sha256_file(tw_root / "wind.dll"),
             "expected_tw_original_sha256": EXPECTED_TW_WIND_DLL_SHA256,
         },
@@ -791,7 +821,11 @@ def launch_executable(args: argparse.Namespace, executable_name: str, action: st
         display_report = apply_report.get("display_runtime", {"changed": False})
     else:
         _kr_root, tw_root_for_check = resolve_paths(args)
-        apply_report = {"skipped": True, "wind_dll_state": wind_dll_patch_state(tw_root_for_check / "wind.dll")}
+        apply_report = {
+            "skipped": True,
+            "wind_dll_state": wind_dll_patch_state(tw_root_for_check / "wind.dll"),
+            "wind_dll_textout_length_state": wind_dll_textout_length_patch_state(tw_root_for_check / "wind.dll"),
+        }
         display_report = install_display_runtime(
             tw_root_for_check,
             args.display_mode,

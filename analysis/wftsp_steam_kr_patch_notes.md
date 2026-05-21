@@ -56,6 +56,13 @@ that force CP936 (`0x03A8`) to CP949 (`0x03B5`):
 The CRT codepage table entries later in the file are intentionally left
 untouched.
 
+The same `TextOutA` wrapper also normalizes the caller-provided text length back
+to `strlen`. That breaks the original game's two-line helper text renderer,
+which passes a substring length when it wraps long title/save labels. The
+launcher patches that wrapper to preserve the `nCount` argument:
+
+- `0x0534`: `mov [ebp+0x18], eax` -> `nop; nop; nop`
+
 ## Implemented Tool
 
 `tooling/wftsp_steam_kr_launcher.py`

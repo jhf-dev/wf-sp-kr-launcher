@@ -26,6 +26,7 @@ Wind Fantasy SP KR -> Steam TW 패치 런처
   - 엔딩/후반부 진행 불가 stage 버그픽스 자동 반영
   - FY성 나가기 man 버그픽스 자동 반영
   - Steam Win10판 wind.dll의 CP936 출력 보정을 CP949로 변경
+  - Steam Win10판 wind.dll의 TextOutA 부분 문자열 길이 처리 보정
   - 게임 실행 버튼은 WindConfig를 거치지 않고 wf_sp_win10.exe를 직접 실행
   - 화면 모드와 해상도는 게임 폴더의 ddraw.dll 프록시와 wftsp_ddraw.ini로 반영
   - 창모드는 현재 모니터 해상도 이하의 4:3 프리셋만 선택 가능

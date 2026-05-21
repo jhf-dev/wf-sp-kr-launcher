@@ -12,6 +12,7 @@
 - 후반부/엔딩 구간 `stage` 진행 불가 버그 자동 보정
 - FY성에서 `나가기`를 눌러도 마을로 돌아오는 `man` 버그 자동 보정
 - Steam Win10판 `wind.dll`의 CP936 출력 보정을 CP949로 패치
+- Steam Win10판 `TextOutA` 래퍼가 부분 문자열 길이를 무시해 도움말 문구가 겹쳐 보이는 문제 보정
 - Steam 대만판 원본 파일 자동 백업 및 복구
 - `wf_sp_win10.exe` 직접 실행 버튼 제공
 - 창모드/전체 창 모드(borderless) 및 해상도 설정을 DirectDraw 프록시로 반영

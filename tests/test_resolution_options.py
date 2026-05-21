@@ -21,6 +21,8 @@ def write_target_layout(root: Path) -> None:
     wind_dll = bytearray(b"\0" * 0x600)
     for offset, original, _patched, _label in core.WIND_DLL_CP949_PATCHES:
         wind_dll[offset : offset + len(original)] = original
+    for offset, original, _patched, _label in core.WIND_DLL_TEXTOUT_LENGTH_PATCHES:
+        wind_dll[offset : offset + len(original)] = original
     (root / "wind.dll").write_bytes(bytes(wind_dll))
 
 
@@ -55,6 +57,23 @@ class ResolutionOptionsTest(unittest.TestCase):
 
         self.assertIn("if (proxy->primary && scaled_mode(proxy->owner->config))", source)
         self.assertNotIn("&& real_src != NULL) {\n        RECT scaled = scale_dest_rect", source)
+
+    def test_wind_dll_patch_preserves_textout_substring_length(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            tw_root = Path(temp_dir) / "Wind Fantasy SP"
+            write_target_layout(tw_root)
+            wind_dll = bytearray((tw_root / "wind.dll").read_bytes())
+            for offset, _original, patched, _label in core.WIND_DLL_CP949_PATCHES:
+                wind_dll[offset : offset + len(patched)] = patched
+            (tw_root / "wind.dll").write_bytes(bytes(wind_dll))
+
+            report = core.patch_wind_dll(tw_root, dry_run=False)
+
+            self.assertEqual("cp949", report["state_before"])
+            self.assertEqual("original", report["textout_length_state_before"])
+            self.assertEqual("patched", report["textout_length_state_after"])
+            for offset, _original, patched, _label in core.WIND_DLL_TEXTOUT_LENGTH_PATCHES:
+                self.assertEqual(patched, (tw_root / "wind.dll").read_bytes()[offset : offset + len(patched)])
 
     def test_directdraw_proxy_keeps_titlebar_outside_windowed_game_clip(self) -> None:
         source = (ROOT / "tooling" / "runtime" / "ddraw_proxy.cpp").read_text(encoding="utf-8")
