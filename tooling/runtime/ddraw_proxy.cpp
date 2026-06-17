@@ -44,6 +44,9 @@ static WNDPROC g_original_wndproc = NULL;
 static DWORD g_focus_resume_tick = 0;
 static BOOL g_window_active = TRUE;
 static BOOL g_hooks_installed = FALSE;
+static RECT g_cleared_margin_full = {0, 0, 0, 0};
+static RECT g_cleared_margin_game = {0, 0, 0, 0};
+static DWORD g_cleared_margin_tick = 0;
 
 typedef HRESULT (WINAPI *DirectDrawCreateProc)(GUID FAR *, LPDIRECTDRAW FAR *, IUnknown FAR *);
 typedef BOOL (WINAPI *SetCursorPosProc)(int, int);
@@ -84,12 +87,22 @@ static BOOL scaled_mode(const RuntimeConfig &config) {
     return lstrcmpiA(config.mode, "windowed") == 0 || lstrcmpiA(config.mode, "borderless") == 0;
 }
 
-static void module_dir(char *buffer, DWORD size) {
-    GetModuleFileNameA(g_module, buffer, size);
-    char *slash = strrchr(buffer, '\\');
-    if (slash != NULL) {
-        slash[1] = '\0';
+static BOOL module_file_path(const char *name, char *buffer, DWORD size) {
+    DWORD length = GetModuleFileNameA(g_module, buffer, size);
+    if (length == 0 || length >= size) {
+        return FALSE;
     }
+    char *slash = strrchr(buffer, '\\');
+    if (slash == NULL) {
+        return FALSE;
+    }
+    slash[1] = '\0';
+    size_t prefix = static_cast<size_t>(slash + 1 - buffer);
+    if (prefix + strlen(name) + 1 > size) {
+        return FALSE;
+    }
+    lstrcatA(buffer, name);
+    return TRUE;
 }
 
 static RuntimeConfig load_config() {
@@ -102,12 +115,14 @@ static RuntimeConfig load_config() {
     config.audio_focus_fix = TRUE;
     config.inactive_window_spoof = TRUE;
 
-    char dir[MAX_PATH];
     char ini[MAX_PATH];
-    module_dir(dir, sizeof(dir));
-    wsprintfA(ini, "%swftsp_ddraw.ini", dir);
+    if (!module_file_path("wftsp_ddraw.ini", ini, sizeof(ini))) {
+        return config;
+    }
 
-    GetPrivateProfileStringA("wftsp_ddraw", "mode", config.mode, config.mode, sizeof(config.mode), ini);
+    char mode_value[16] = "";
+    GetPrivateProfileStringA("wftsp_ddraw", "mode", "fullscreen", mode_value, sizeof(mode_value), ini);
+    lstrcpynA(config.mode, mode_value, sizeof(config.mode));
     config.width = GetPrivateProfileIntA("wftsp_ddraw", "width", config.width, ini);
     config.height = GetPrivateProfileIntA("wftsp_ddraw", "height", config.height, ini);
     config.debug = GetPrivateProfileIntA("wftsp_ddraw", "debug", 0, ini) != 0;
@@ -127,10 +142,10 @@ static void debug_log(const RuntimeConfig &config, const char *message) {
     if (!config.debug) {
         return;
     }
-    char dir[MAX_PATH];
     char log_path[MAX_PATH];
-    module_dir(dir, sizeof(dir));
-    wsprintfA(log_path, "%swftsp_ddraw.log", dir);
+    if (!module_file_path("wftsp_ddraw.log", log_path, sizeof(log_path))) {
+        return;
+    }
     HANDLE file = CreateFileA(log_path, FILE_APPEND_DATA, FILE_SHARE_READ, NULL, OPEN_ALWAYS, FILE_ATTRIBUTE_NORMAL, NULL);
     if (file == INVALID_HANDLE_VALUE) {
         return;
@@ -366,7 +381,10 @@ static MCIERROR WINAPI Hook_mciSendStringA(LPCSTR command, LPSTR return_string, 
     if (g_config_loaded && g_config.debug && command != NULL) {
         debug_log(g_config, command);
     }
-    return g_real_mciSendStringA != NULL ? g_real_mciSendStringA(actual, return_string, return_length, callback) : 0;
+    if (g_real_mciSendStringA == NULL) {
+        return MCIERR_INTERNAL;
+    }
+    return g_real_mciSendStringA(actual, return_string, return_length, callback);
 }
 
 static BOOL patch_import(const char *dll_name, const char *func_name, void *replacement, void **original) {
@@ -546,11 +564,13 @@ static RECT scale_rect(DDProxy *owner, DWORD x, DWORD y, LPRECT src_rect) {
 
     LONG target_w = base.right - base.left;
     LONG target_h = base.bottom - base.top;
+    // Map edges the same way scale_dest_rect does so BltFast tiles and Blt
+    // partial updates land on identical scaled pixel boundaries.
     RECT dst;
     dst.left = base.left + MulDiv(static_cast<int>(x), target_w, 640);
     dst.top = base.top + MulDiv(static_cast<int>(y), target_h, 480);
-    dst.right = dst.left + MulDiv(src.right - src.left, target_w, 640);
-    dst.bottom = dst.top + MulDiv(src.bottom - src.top, target_h, 480);
+    dst.right = base.left + MulDiv(static_cast<int>(x) + (src.right - src.left), target_w, 640);
+    dst.bottom = base.top + MulDiv(static_cast<int>(y) + (src.bottom - src.top), target_h, 480);
     return dst;
 }
 
@@ -581,9 +601,19 @@ static DWORD bltfast_to_blt_flags(DWORD flags) {
     return result;
 }
 
-static void color_fill_rect(IDirectDrawSurface *surface, const RECT &rect) {
-    if (surface == NULL || rect.left >= rect.right || rect.top >= rect.bottom) {
-        return;
+static void reset_margin_clear_cache() {
+    RECT empty = {0, 0, 0, 0};
+    g_cleared_margin_full = empty;
+    g_cleared_margin_game = empty;
+    g_cleared_margin_tick = 0;
+}
+
+static BOOL color_fill_rect(IDirectDrawSurface *surface, const RECT &rect) {
+    if (surface == NULL) {
+        return FALSE;
+    }
+    if (rect.left >= rect.right || rect.top >= rect.bottom) {
+        return TRUE;
     }
 
     DDBLTFX fx;
@@ -591,7 +621,7 @@ static void color_fill_rect(IDirectDrawSurface *surface, const RECT &rect) {
     fx.dwSize = sizeof(fx);
     fx.dwFillColor = 0;
     RECT target = rect;
-    surface->lpVtbl->Blt(surface, &target, NULL, NULL, DDBLT_COLORFILL | DDBLT_WAIT, &fx);
+    return SUCCEEDED(surface->lpVtbl->Blt(surface, &target, NULL, NULL, DDBLT_COLORFILL | DDBLT_WAIT, &fx));
 }
 
 static void clear_scaled_margins(SurfaceProxy *proxy) {
@@ -601,14 +631,31 @@ static void clear_scaled_margins(SurfaceProxy *proxy) {
 
     RECT full = full_client_rect_screen(proxy->owner->hwnd);
     RECT game = game_area_screen(proxy->owner->hwnd);
+    // The game blits small UI regions to the primary surface constantly;
+    // skip the refill while the window layout is unchanged. The short expiry
+    // still heals margins that were occluded by another window and uncovered
+    // without any layout change.
+    DWORD now = GetTickCount();
+    if (now - g_cleared_margin_tick < 250
+        && EqualRect(&full, &g_cleared_margin_full)
+        && EqualRect(&game, &g_cleared_margin_game)) {
+        return;
+    }
+
     RECT left = {full.left, full.top, game.left, full.bottom};
     RECT right = {game.right, full.top, full.right, full.bottom};
     RECT top = {game.left, full.top, game.right, game.top};
     RECT bottom = {game.left, game.bottom, game.right, full.bottom};
-    color_fill_rect(proxy->real, left);
-    color_fill_rect(proxy->real, right);
-    color_fill_rect(proxy->real, top);
-    color_fill_rect(proxy->real, bottom);
+    BOOL cleared = TRUE;
+    cleared = color_fill_rect(proxy->real, left) && cleared;
+    cleared = color_fill_rect(proxy->real, right) && cleared;
+    cleared = color_fill_rect(proxy->real, top) && cleared;
+    cleared = color_fill_rect(proxy->real, bottom) && cleared;
+    if (cleared) {
+        g_cleared_margin_full = full;
+        g_cleared_margin_game = game;
+        g_cleared_margin_tick = now;
+    }
 }
 
 static SurfaceProxy *create_surface_proxy(IDirectDrawSurface *real, DDProxy *owner, BOOL primary) {
@@ -626,6 +673,16 @@ static SurfaceProxy *create_surface_proxy(IDirectDrawSurface *real, DDProxy *own
     return proxy;
 }
 
+static BOOL scaling_bypass_interface(REFIID riid) {
+    return IsEqualGUID(riid, IID_IDirectDraw2)
+        || IsEqualGUID(riid, IID_IDirectDraw4)
+        || IsEqualGUID(riid, IID_IDirectDraw7)
+        || IsEqualGUID(riid, IID_IDirectDrawSurface2)
+        || IsEqualGUID(riid, IID_IDirectDrawSurface3)
+        || IsEqualGUID(riid, IID_IDirectDrawSurface4)
+        || IsEqualGUID(riid, IID_IDirectDrawSurface7);
+}
+
 static HRESULT STDMETHODCALLTYPE DD_QueryInterface(IDirectDraw *self, REFIID riid, LPVOID *out) {
     if (out == NULL) {
         return E_POINTER;
@@ -636,6 +693,13 @@ static HRESULT STDMETHODCALLTYPE DD_QueryInterface(IDirectDraw *self, REFIID rii
         proxy->real->lpVtbl->AddRef(proxy->real);
         InterlockedIncrement(&proxy->refs);
         return DD_OK;
+    }
+    // Newer DirectDraw interfaces would hand the caller the unproxied object
+    // and silently bypass every scaled-mode fix; fail fast instead.
+    if (scaled_mode(proxy->config) && scaling_bypass_interface(riid)) {
+        debug_log(proxy->config, "QueryInterface refused: newer DirectDraw interface would bypass scaling");
+        *out = NULL;
+        return E_NOINTERFACE;
     }
     return proxy->real->lpVtbl->QueryInterface(proxy->real, riid, out);
 }
@@ -699,7 +763,9 @@ static BOOL should_force_16bit_offscreen(DDProxy *proxy, const DDSURFACEDESC *de
     if ((desc->dwFlags & (DDSD_WIDTH | DDSD_HEIGHT)) != (DDSD_WIDTH | DDSD_HEIGHT)) {
         return FALSE;
     }
-    if ((desc->dwFlags & DDSD_PIXELFORMAT) != 0 && desc->ddpfPixelFormat.dwRGBBitCount == 16) {
+    // Only surfaces that inherit the (now desktop-format) primary need the
+    // RGB565 force; an explicitly requested pixel format must stay untouched.
+    if ((desc->dwFlags & DDSD_PIXELFORMAT) != 0) {
         return FALSE;
     }
     return TRUE;
@@ -727,8 +793,12 @@ static HRESULT STDMETHODCALLTYPE DD_CreateSurface(IDirectDraw *self, LPDDSURFACE
         real_surface = NULL;
         hr = proxy->real->lpVtbl->CreateSurface(proxy->real, desc, &real_surface, outer);
     }
-    if (FAILED(hr) || surface == NULL || real_surface == NULL) {
+    if (FAILED(hr) || real_surface == NULL) {
         return hr;
+    }
+    if (surface == NULL) {
+        real_surface->lpVtbl->Release(real_surface);
+        return DDERR_INVALIDPARAMS;
     }
     if (primary) {
         attach_window_clipper(proxy, real_surface);
@@ -745,8 +815,12 @@ static HRESULT STDMETHODCALLTYPE DD_CreateSurface(IDirectDraw *self, LPDDSURFACE
 static HRESULT STDMETHODCALLTYPE DD_DuplicateSurface(IDirectDraw *self, LPDIRECTDRAWSURFACE src, LPDIRECTDRAWSURFACE *dst) {
     IDirectDrawSurface *real_dst = NULL;
     HRESULT hr = as_dd(self)->real->lpVtbl->DuplicateSurface(as_dd(self)->real, unwrap_surface(src), &real_dst);
-    if (FAILED(hr) || dst == NULL || real_dst == NULL) {
+    if (FAILED(hr) || real_dst == NULL) {
         return hr;
+    }
+    if (dst == NULL) {
+        real_dst->lpVtbl->Release(real_dst);
+        return DDERR_INVALIDPARAMS;
     }
     SurfaceProxy *wrapped = create_surface_proxy(real_dst, as_dd(self), FALSE);
     if (wrapped == NULL) {
@@ -846,6 +920,11 @@ static HRESULT STDMETHODCALLTYPE Surface_QueryInterface(IDirectDrawSurface *self
         InterlockedIncrement(&proxy->refs);
         return DD_OK;
     }
+    if (proxy->owner != NULL && scaled_mode(proxy->owner->config) && scaling_bypass_interface(riid)) {
+        debug_log(proxy->owner->config, "QueryInterface refused: newer DirectDrawSurface interface would bypass scaling");
+        *out = NULL;
+        return E_NOINTERFACE;
+    }
     return proxy->real->lpVtbl->QueryInterface(proxy->real, riid, out);
 }
 
@@ -920,8 +999,12 @@ static HRESULT STDMETHODCALLTYPE Surface_Flip(IDirectDrawSurface *self, LPDIRECT
 static HRESULT STDMETHODCALLTYPE Surface_GetAttachedSurface(IDirectDrawSurface *self, LPDDSCAPS caps, LPDIRECTDRAWSURFACE *surface) {
     IDirectDrawSurface *real_surface = NULL;
     HRESULT hr = as_surface(self)->real->lpVtbl->GetAttachedSurface(as_surface(self)->real, caps, &real_surface);
-    if (FAILED(hr) || surface == NULL || real_surface == NULL) {
+    if (FAILED(hr) || real_surface == NULL) {
         return hr;
+    }
+    if (surface == NULL) {
+        real_surface->lpVtbl->Release(real_surface);
+        return DDERR_INVALIDPARAMS;
     }
     SurfaceProxy *wrapped = create_surface_proxy(real_surface, as_surface(self)->owner, FALSE);
     if (wrapped == NULL) {
@@ -990,7 +1073,13 @@ static HRESULT STDMETHODCALLTYPE Surface_ReleaseDC(IDirectDrawSurface *self, HDC
 }
 
 static HRESULT STDMETHODCALLTYPE Surface_Restore(IDirectDrawSurface *self) {
-    return as_surface(self)->real->lpVtbl->Restore(as_surface(self)->real);
+    SurfaceProxy *proxy = as_surface(self);
+    if (proxy->primary) {
+        // Restored surface contents are undefined; the margins must be
+        // refilled on the next primary blit.
+        reset_margin_clear_cache();
+    }
+    return proxy->real->lpVtbl->Restore(proxy->real);
 }
 
 static HRESULT STDMETHODCALLTYPE Surface_SetClipper(IDirectDrawSurface *self, LPDIRECTDRAWCLIPPER clipper) {
@@ -1140,11 +1229,9 @@ BOOL WINAPI DllMain(HINSTANCE instance, DWORD reason, LPVOID) {
         g_module = instance;
         init_vtables();
         DisableThreadLibraryCalls(instance);
-    } else if (reason == DLL_PROCESS_DETACH) {
-        if (g_real_ddraw != NULL) {
-            FreeLibrary(g_real_ddraw);
-            g_real_ddraw = NULL;
-        }
     }
+    // DLL_PROCESS_DETACH intentionally does not FreeLibrary(g_real_ddraw):
+    // unloading another module while inside DllMain runs under the loader
+    // lock, and the process teardown releases it anyway.
     return TRUE;
 }
