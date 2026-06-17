@@ -101,6 +101,7 @@ class PatchGui(tk.Tk):
 
         self.events: queue.Queue[tuple[str, object]] = queue.Queue()
         self.worker: threading.Thread | None = None
+        self.worker_failed = False
         self.launcher_art_source = self._load_launcher_art()
         self.launcher_art_rendered: tk.PhotoImage | None = None
         self.launcher_art_canvas: tk.Canvas | None = None
@@ -356,6 +357,15 @@ class PatchGui(tk.Tk):
             no_apply=no_apply,
         )
 
+    def _args_or_alert(self, **kwargs) -> argparse.Namespace | None:
+        # Tk variables must be read on the main thread; workers only receive
+        # the prebuilt argparse namespace.
+        try:
+            return self._args(**kwargs)
+        except ValueError as exc:
+            messagebox.showerror(APP_TITLE, str(exc))
+            return None
+
     def _set_busy(self, busy: bool) -> None:
         state = "disabled" if busy else "normal"
         for button in [
@@ -371,6 +381,7 @@ class PatchGui(tk.Tk):
         if self.worker and self.worker.is_alive():
             messagebox.showinfo(APP_TITLE, "이미 작업이 진행 중입니다.")
             return
+        self.worker_failed = False
         self._set_busy(True)
         self.status_text.set(label)
         self._log(f"\n[{label}] 시작")
@@ -397,10 +408,11 @@ class PatchGui(tk.Tk):
                 if kind == "result":
                     self._handle_result(payload)
                 elif kind == "error":
+                    self.worker_failed = True
                     self._log(str(payload))
                     messagebox.showerror(APP_TITLE, str(payload))
                 elif kind == "done":
-                    self.status_text.set("완료")
+                    self.status_text.set("오류로 중단됨" if self.worker_failed else "완료")
                     self._set_busy(False)
         except queue.Empty:
             pass
@@ -425,36 +437,48 @@ class PatchGui(tk.Tk):
         self.log.see(END)
 
     def apply_patch(self) -> None:
+        args = self._args_or_alert()
+        if args is None:
+            return
+        launch_args: argparse.Namespace | None = None
+        if self.launch_after_apply.get():
+            launch_args = self._args_or_alert(no_apply=True, require_kr=False)
+            if launch_args is None:
+                return
+
         def work() -> dict[str, object]:
-            args = self._args()
             report = core.apply_patch(args)
-            if self.launch_after_apply.get():
-                launch_args = self._args(no_apply=True, require_kr=False)
-                launch_report = core.launch_win10(launch_args)
-                report["launch"] = launch_report
+            if launch_args is not None:
+                report["launch"] = core.launch_win10(launch_args)
             return report
 
         self._run_worker("패치 적용 중", work)
 
     def check_status(self) -> None:
-        self._run_worker("상태 확인 중", lambda: core.status(self._args(dry_run=True)))
+        args = self._args_or_alert(dry_run=True)
+        if args is None:
+            return
+        self._run_worker("상태 확인 중", lambda: core.status(args))
 
     def restore_patch(self) -> None:
+        args = self._args_or_alert(require_kr=False)
+        if args is None:
+            return
         if not messagebox.askyesno(APP_TITLE, "백업된 TW 원본 파일로 복구할까요?"):
             return
-        self._run_worker("원본 복구 중", lambda: core.restore_patch(self._args(require_kr=False)))
+        self._run_worker("원본 복구 중", lambda: core.restore_patch(args))
 
     def launch_game(self) -> None:
-        self._run_worker(
-            "게임 실행 중",
-            lambda: core.launch_win10(self._args(no_apply=True, require_kr=False)),
-        )
+        args = self._args_or_alert(no_apply=True, require_kr=False)
+        if args is None:
+            return
+        self._run_worker("게임 실행 중", lambda: core.launch_win10(args))
 
     def launch_config(self) -> None:
-        self._run_worker(
-            "WindConfig 실행 중",
-            lambda: core.launch(self._args(no_apply=True, require_kr=False)),
-        )
+        args = self._args_or_alert(no_apply=True, require_kr=False)
+        if args is None:
+            return
+        self._run_worker("WindConfig 실행 중", lambda: core.launch(args))
 
 
 def main(argv: list[str] | None = None) -> int:
