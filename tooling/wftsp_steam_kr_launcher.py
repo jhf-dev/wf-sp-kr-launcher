@@ -32,6 +32,7 @@ except ImportError:  # pragma: no cover - this tool is Windows-only in practice.
 TARGET_DEFAULT = Path("Wind Fantasy SP_TW")
 BACKUP_DIR_NAME = "_wftsp_kr_patch_backup"
 STATE_FILE_NAME = "wftsp_kr_patch_state.json"
+CREATED_RUNTIME_MARKER_NAME = "wftsp_kr_patch_created_runtime.json"
 STEAM_GAME_DIR_NAMES = ("Wind Fantasy SP", "Wind Fantasy SP_TW")
 
 EXPECTED_TW_WIND_DLL_SHA256 = (
@@ -180,6 +181,55 @@ def backup_path_for(tw_root: Path, relative_path: str) -> Path:
 
 def state_path(tw_root: Path) -> Path:
     return tw_root / BACKUP_DIR_NAME / STATE_FILE_NAME
+
+
+def created_runtime_marker_path(tw_root: Path) -> Path:
+    return tw_root / BACKUP_DIR_NAME / CREATED_RUNTIME_MARKER_NAME
+
+
+def read_created_runtime_marker(tw_root: Path) -> dict[str, list[str]]:
+    """Map launcher-created runtime files to every SHA256 the launcher wrote.
+
+    The per-apply state report only remembers the most recent apply, so repeat
+    applies would otherwise lose track of which runtime files never existed in
+    the original TW install.
+    """
+    path = created_runtime_marker_path(tw_root)
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {}
+    if not isinstance(data, dict):
+        return {}
+    marker: dict[str, list[str]] = {}
+    for key, value in data.items():
+        if key in DDRAW_RUNTIME_FILES and isinstance(value, list):
+            marker[key] = [item for item in value if isinstance(item, str)]
+    return marker
+
+
+def record_created_runtime_file(tw_root: Path, relative_path: str, desired_hash: str) -> None:
+    marker = read_created_runtime_marker(tw_root)
+    hashes = marker.setdefault(relative_path, [])
+    if desired_hash not in hashes:
+        hashes.append(desired_hash)
+    path = created_runtime_marker_path(tw_root)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(marker, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+
+
+def has_original_runtime_backup(
+    tw_root: Path,
+    relative_path: str,
+    marker: dict[str, list[str]] | None = None,
+) -> bool:
+    backup = backup_path_for(tw_root, relative_path)
+    if not backup.exists():
+        return False
+    known_created_hashes = (marker or read_created_runtime_marker(tw_root)).get(relative_path, [])
+    return not known_created_hashes or sha256_file(backup) not in known_created_hashes
 
 
 def ensure_target_layout(tw_root: Path) -> None:
@@ -377,21 +427,28 @@ def wind_dll_patch_group_state(
     return original_name
 
 
-def patch_wind_dll(tw_root: Path, dry_run: bool) -> dict[str, object]:
+def ensure_wind_dll_layout(tw_root: Path) -> tuple[str, str]:
+    """Validate wind.dll against the known TW Steam layout without writing."""
     path = tw_root / "wind.dll"
-    before_hash = sha256_file(path)
-    state_before = wind_dll_patch_state(path)
-    text_length_state_before = wind_dll_textout_length_patch_state(path)
-    if state_before == "unexpected":
+    state = wind_dll_patch_state(path)
+    text_length_state = wind_dll_textout_length_patch_state(path)
+    if state == "unexpected":
         raise SystemExit(
             "wind.dll patch offsets do not match the known TW Steam layout; "
             "refusing to patch this DLL."
         )
-    if text_length_state_before == "unexpected":
+    if text_length_state == "unexpected":
         raise SystemExit(
             "wind.dll TextOutA length patch offsets do not match the known TW Steam layout; "
             "refusing to patch this DLL."
         )
+    return state, text_length_state
+
+
+def patch_wind_dll(tw_root: Path, dry_run: bool) -> dict[str, object]:
+    path = tw_root / "wind.dll"
+    before_hash = sha256_file(path)
+    state_before, text_length_state_before = ensure_wind_dll_layout(tw_root)
 
     changed_offsets: list[dict[str, object]] = []
     needs_patch = state_before != "cp949" or text_length_state_before != "patched"
@@ -435,7 +492,21 @@ def overlay_status(kr_root: Path, tw_root: Path, files: list[str]) -> list[FileS
     for relative_path in files:
         src = kr_root / relative_path
         dst = tw_root / relative_path
-        src_hash = sha256_file(src) if src.exists() else None
+        src_hash: str | None = None
+        src_size: int | None = None
+        if src.exists():
+            src_size = src.stat().st_size
+            try:
+                # Compare what apply would actually write: stage/man receive
+                # in-memory progression fixes before landing in the TW target.
+                prepared_data, _source_patch = prepare_overlay_data(kr_root, relative_path)
+            except Exception:
+                prepared_data = None
+            if prepared_data is not None:
+                src_hash = sha256_bytes(prepared_data)
+                src_size = len(prepared_data)
+            else:
+                src_hash = sha256_file(src)
         dst_hash = sha256_file(dst) if dst.exists() else None
         result.append(
             FileStatus(
@@ -443,7 +514,7 @@ def overlay_status(kr_root: Path, tw_root: Path, files: list[str]) -> list[FileS
                 source_sha256=src_hash,
                 target_sha256=dst_hash,
                 target_matches_source=(src_hash == dst_hash) if src_hash and dst_hash else None,
-                size_source=src.stat().st_size if src.exists() else None,
+                size_source=src_size,
                 size_target=dst.stat().st_size if dst.exists() else None,
             )
         )
@@ -594,16 +665,27 @@ def runtime_file_report(
     target_exists_before = target.exists()
     target_hash_before = sha256_file(target) if target_exists_before else None
     desired_hash = sha256_bytes(desired_data)
+    created_marker = read_created_runtime_marker(tw_root)
+    has_original_backup = has_original_runtime_backup(tw_root, relative_path, created_marker)
+    launcher_created_before = relative_path in created_marker and not has_original_backup
+    should_track_as_created = not has_original_backup and (
+        launcher_created_before or not target_exists_before
+    )
     changed = target_hash_before != desired_hash
     if changed and not dry_run:
-        if target_exists_before:
+        # A file the launcher itself created on an earlier apply is not a TW
+        # original; backing it up would make restore resurrect it later.
+        if target_exists_before and not launcher_created_before:
             backup_file_once(tw_root, relative_path)
         target.parent.mkdir(parents=True, exist_ok=True)
         target.write_bytes(desired_data)
+        if should_track_as_created:
+            record_created_runtime_file(tw_root, relative_path, desired_hash)
     return {
         "path": relative_path,
         "changed": changed,
         "target_exists_before": target_exists_before,
+        "launcher_created": should_track_as_created,
         "target_sha256_before": target_hash_before,
         "target_sha256_after": desired_hash if changed and not dry_run else target_hash_before,
         "desired_sha256": desired_hash,
@@ -686,8 +768,16 @@ def write_state(tw_root: Path, report: dict[str, object]) -> None:
 
 def apply_patch(args: argparse.Namespace) -> dict[str, object]:
     kr_root, tw_root = resolve_paths(args)
+    if kr_root == tw_root:
+        raise SystemExit(
+            "KR source folder and TW Steam target folder must be different; "
+            f"both point to: {tw_root}"
+        )
     ensure_target_layout(tw_root)
     ensure_sources(kr_root)
+    # Validate wind.dll before any overlay write so a layout mismatch cannot
+    # leave a half-applied TW folder behind.
+    ensure_wind_dll_layout(tw_root)
 
     running = running_wftsp_processes()
     if running and not args.dry_run:
@@ -727,23 +817,60 @@ def apply_patch(args: argparse.Namespace) -> dict[str, object]:
 
 def restore_patch(args: argparse.Namespace) -> dict[str, object]:
     _kr_root, tw_root = resolve_paths(args)
+    running = running_wftsp_processes()
+    if running and not args.dry_run:
+        raise SystemExit(
+            "Close the running WFTSP processes before restoring files: " + ", ".join(running)
+        )
     backup_root = tw_root / BACKUP_DIR_NAME
     if not backup_root.exists():
         raise SystemExit(f"backup directory does not exist: {backup_root}")
 
+    created_marker = read_created_runtime_marker(tw_root)
     restored: list[str] = []
     removed_created_runtime: list[str] = []
     skipped_created_runtime: list[dict[str, object]] = []
     for backup in backup_root.rglob("*"):
-        if not backup.is_file() or backup.name == STATE_FILE_NAME:
+        if not backup.is_file() or backup.name in {STATE_FILE_NAME, CREATED_RUNTIME_MARKER_NAME}:
             continue
         relative_path = str(backup.relative_to(backup_root))
+        if relative_path in created_marker and not has_original_runtime_backup(
+            tw_root, relative_path, created_marker
+        ):
+            # A backup of a launcher-created runtime file is a launcher
+            # artifact, not a TW original; restoring it would resurrect it.
+            continue
         target = tw_root / relative_path
         if not args.dry_run:
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(backup, target)
         restored.append(relative_path)
 
+    for relative_path in sorted(created_marker):
+        if relative_path in restored:
+            continue
+        target = tw_root / relative_path
+        if not target.exists():
+            continue
+        known_hashes = created_marker[relative_path]
+        current_hash = sha256_file(target)
+        if known_hashes and current_hash not in known_hashes:
+            skipped_created_runtime.append(
+                {
+                    "path": relative_path,
+                    "reason": "current file differs from launcher-created runtime file",
+                    "current_sha256": current_hash,
+                    "known_sha256": known_hashes,
+                }
+            )
+            continue
+        if not args.dry_run:
+            target.unlink()
+        removed_created_runtime.append(relative_path)
+
+    # Legacy fallback: installs patched before the created-runtime marker
+    # existed only have the last apply's state report to identify
+    # launcher-created files.
     state_file = state_path(tw_root)
     if state_file.exists():
         state = json.loads(state_file.read_text(encoding="utf-8"))
@@ -755,7 +882,12 @@ def restore_patch(args: argparse.Namespace) -> dict[str, object]:
                 if not isinstance(item, dict):
                     continue
                 relative_path = str(item.get("path", ""))
-                if relative_path not in DDRAW_RUNTIME_FILES or relative_path in restored:
+                if (
+                    relative_path not in DDRAW_RUNTIME_FILES
+                    or relative_path in restored
+                    or relative_path in removed_created_runtime
+                    or relative_path in created_marker
+                ):
                     continue
                 if item.get("target_exists_before"):
                     continue

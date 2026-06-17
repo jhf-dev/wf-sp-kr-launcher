@@ -69,9 +69,9 @@ launcher patches that wrapper to preserve the `nCount` argument:
 
 Commands:
 
-- `status`: report overlay, `wind.dll` CP state, DirectDraw runtime state, observed WindConfig registry values, and Steam string indicators.
-- `apply`: back up original TW files, copy KR overlay, patch `wind.dll` to CP949.
-- `restore`: restore backed-up TW files.
+- `status`: report overlay, `wind.dll` CP state, DirectDraw runtime state, observed WindConfig registry values, and Steam string indicators. Overlay rows compare the in-memory repaired `stage`/`man` bytes, matching what `apply` actually writes.
+- `apply`: back up original TW files, copy KR overlay, patch `wind.dll` to CP949. The `wind.dll` layout is validated before any overlay file is written.
+- `restore`: restore backed-up TW files. Display runtime files the launcher itself created (`ddraw.dll`, `wftsp_ddraw.ini`) are tracked across repeated applies in `_wftsp_kr_patch_backup\wftsp_kr_patch_created_runtime.json` and removed on restore; a runtime file whose hash the launcher never wrote is left in place.
 - `launch`: apply if needed, then start `WindConfig.exe`.
 
 Convenience entry:
