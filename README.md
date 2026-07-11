@@ -30,6 +30,15 @@ WFTSP_KR_Steam_Patch_GUI.exe
 
 이 실행 파일은 Python/Tk 런타임을 포함한 standalone 빌드입니다. 사용자 PC에 Python을 따로 설치할 필요가 없습니다.
 
+## 런처 자동 업데이트
+
+배포 패키지의 `런처 업데이트` 버튼을 누르면 별도 업데이터가 GitHub의 최신 안정 릴리즈를 확인합니다. 새 버전이 있으면 런처를 종료한 뒤 ZIP의 버전 정보와 필수 파일을 검증하고, 현재 패키지를 백업한 다음 관리 대상 파일만 교체합니다. 적용이 끝나면 새 런처를 자동으로 다시 실행합니다.
+
+- `launcher_version.json`, 런처 EXE, `payload/ddraw.dll`이 모두 있는 정식 배포 패키지에서만 동작합니다.
+- 알 수 없는 ZIP 경로나 릴리즈 태그와 패키지 버전이 다른 파일은 적용하지 않습니다.
+- 사용자가 패키지 폴더에 추가한 파일은 삭제하지 않습니다.
+- 이전 파일은 `_launcher_updates\backup` 아래에 보관합니다.
+
 ## 사용 방법
 
 1. `WFTSP_KR_Steam_Patch_GUI.exe`를 실행합니다.
@@ -149,8 +158,11 @@ python tooling\wftsp_steam_kr_launcher.py restore --tw-root <TW폴더>
 standalone exe 빌드:
 
 ```powershell
+$env:WFTSP_MINGW_CXX = "C:\\path\\to\\i686-w64-mingw32-g++.exe"
 python tooling\build_ddraw_proxy.py
-python -m PyInstaller --noconfirm --clean --noconsole --onefile --name WFTSP_KR_Steam_Patch_GUI --paths tooling tooling\wftsp_steam_kr_patch_gui.py
+python -m PyInstaller WFTSP_KR_Steam_Patch_GUI.spec
+python -m PyInstaller WFTSP_KR_Steam_Patch_Updater.spec
+python tooling\build_release_package.py
 ```
 
 빌드 결과는 `dist\WFTSP_KR_Steam_Patch_GUI.exe`에 생성됩니다. 배포 패키지에는 exe와 함께 `payload\ddraw.dll`도 포함되어야 합니다.

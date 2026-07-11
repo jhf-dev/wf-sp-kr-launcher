@@ -22,6 +22,13 @@ def write_target_layout(root: Path) -> None:
 
 
 class LauncherGuiDefaultsTest(unittest.TestCase):
+    def test_gui_maps_selected_font_profile_to_core_argument(self) -> None:
+        app = gui.PatchGui.__new__(gui.PatchGui)
+        app.font_profile = mock.Mock()
+        app.font_profile.get.return_value = "dotum"
+
+        self.assertEqual("dotum", app._font_profile_arg())
+
     def test_detects_wind_fantasy_sp_from_steam_libraryfolders(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
             temp = Path(temp_dir)

@@ -166,6 +166,21 @@ configuration uses `HWND_NOTOPMOST`, clears any stray `WS_EX_TOPMOST` style, and
 keeps owner z-order stable so the game does not behave like an always-on-top
 window while the focus workaround is active.
 
+## Font Profile Runtime Option
+
+The launcher exposes three in-game GDI font profiles: `system`, `gulim`, and
+`dotum`. `gulim` and `dotum` are shown only when their Windows font registry
+entries are present. No proprietary system font is bundled.
+
+The DirectDraw proxy patches the target executable's `GDI32.CreateFontA` import
+and selects the requested face while preserving the game's requested font
+height. Python launcher tests cover profile normalization, availability
+filtering and restore tracking. Live Steam Win10 DLL build
+and visible in-game proof remain pending because the Steam `wf_sp_win10.exe`
+runtime is outside this checkout. The payload DLL was rebuilt with the WinLibs
+i686 compiler staged under `C:\\tmp`; PE proof is `Machine=0x14c`,
+`Magic=0x10b` and export `DirectDrawCreate`.
+
 ## Current Applied State
 
 After `python tooling\wftsp_steam_kr_launcher.py apply`:

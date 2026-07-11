@@ -7,21 +7,24 @@
 !WFTSP_KR_Steam_Patch_GUI.cmd
 !WFTSP_KR_Steam_Patch_GUI.exe
 !WFTSP_KR_Steam_Patch_GUI.spec
+!WFTSP_KR_Steam_Patch_Updater.spec
+!launcher_version.json
 
 !assets/
 assets/*
 !assets/launcher_art.png
-
 !tooling/
 tooling/*
 !tooling/wftsp_dialogue_pointer_patch.py
 !tooling/wftsp_fy_city_exit_patch.py
 !tooling/build_ddraw_proxy.py
+!tooling/build_release_package.py
 !tooling/runtime/
 tooling/runtime/*
 !tooling/runtime/ddraw_proxy.cpp
 !tooling/wftsp_steam_kr_launcher.py
 !tooling/wftsp_steam_kr_patch_gui.py
+!tooling/wftsp_release_updater.py
 
 !payload/
 payload/*
@@ -37,3 +40,4 @@ tests/*
 !tests/test_launcher_gui_defaults.py
 !tests/test_launcher_safety.py
 !tests/test_resolution_options.py
+!tests/test_release_updater.py

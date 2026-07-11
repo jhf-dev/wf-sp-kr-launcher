@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import argparse
+import os
 import shutil
 import subprocess
 from pathlib import Path
@@ -15,6 +16,9 @@ OUTPUT = ROOT / "payload" / "ddraw.dll"
 
 
 def find_compiler() -> str:
+    configured = os.environ.get("WFTSP_MINGW_CXX", "").strip()
+    if configured and Path(configured).is_file():
+        return configured
     for name in ["i686-w64-mingw32-g++", "g++"]:
         path = shutil.which(name)
         if path:

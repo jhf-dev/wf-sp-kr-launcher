@@ -6,8 +6,12 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import os
 import queue
+import shutil
+import subprocess
 import sys
+import tempfile
 import threading
 import traceback
 from pathlib import Path
@@ -30,6 +34,33 @@ DISPLAY_BORDERLESS = "전체 창 모드"
 DISPLAY_FULLSCREEN = "전체화면"
 
 
+FONT_PROFILE_LABELS = {
+    core.FONT_PROFILE_SYSTEM: "시스템 기본 폰트",
+    core.FONT_PROFILE_GULIM: "굴림",
+    core.FONT_PROFILE_DOTUM: "돋움",
+}
+
+SETTINGS_PATH = Path(os.environ.get("LOCALAPPDATA", Path.home() / "AppData" / "Local")) / "WFTSP_KR_Steam_Patch_GUI" / "settings.json"
+VERSION_FILE_NAME = "launcher_version.json"
+UPDATER_EXE_NAME = "WFTSP_KR_Steam_Patch_Updater.exe"
+
+
+def load_settings() -> dict[str, object]:
+    try:
+        data = json.loads(SETTINGS_PATH.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def save_settings(data: dict[str, object]) -> None:
+    try:
+        SETTINGS_PATH.parent.mkdir(parents=True, exist_ok=True)
+        SETTINGS_PATH.write_text(json.dumps(data, ensure_ascii=False, indent=2), encoding="utf-8")
+    except OSError:
+        return
+
+
 def default_kr_root() -> str:
     return ""
 
@@ -37,6 +68,28 @@ def default_kr_root() -> str:
 def default_tw_root() -> str:
     detected = core.detect_steam_wftsp_root()
     return str(detected) if detected else ""
+
+
+def launcher_bundle_root() -> Path:
+    if getattr(sys, "frozen", False):
+        return Path(sys.executable).resolve().parent
+    return Path(__file__).resolve().parents[1]
+
+
+def updater_command(bundle_root: Path, parent_pid: int) -> list[str]:
+    updater_exe = bundle_root / UPDATER_EXE_NAME
+    if updater_exe.is_file():
+        temp_root = Path(tempfile.mkdtemp(prefix="wftsp_updater_"))
+        temp_updater = temp_root / UPDATER_EXE_NAME
+        shutil.copy2(updater_exe, temp_updater)
+        return [str(temp_updater), "--bundle-root", str(bundle_root),
+                "--parent-pid", str(parent_pid), "--restart"]
+    if not getattr(sys, "frozen", False):
+        script = bundle_root / "tooling" / "wftsp_release_updater.py"
+        if script.is_file():
+            return [sys.executable, str(script), "--bundle-root", str(bundle_root),
+                    "--parent-pid", str(parent_pid), "--restart"]
+    raise FileNotFoundError(f"업데이터를 찾지 못했습니다: {updater_exe}")
 
 
 def make_args(
@@ -47,6 +100,7 @@ def make_args(
     display_mode: str | None = None,
     width: int | None = None,
     height: int | None = None,
+    font_profile: str | None = None,
     no_apply: bool = False,
 ) -> argparse.Namespace:
     return argparse.Namespace(
@@ -56,6 +110,7 @@ def make_args(
         display_mode=display_mode,
         width=width,
         height=height,
+        font_profile=font_profile,
         no_apply=no_apply,
     )
 
@@ -113,16 +168,21 @@ class PatchGui(tk.Tk):
             self.geometry("900x660")
             self.minsize(790, 540)
 
-        self.kr_path = tk.StringVar(value=default_kr_root())
-        self.tw_path = tk.StringVar(value=default_tw_root())
-        self.display_mode = tk.StringVar(value=DISPLAY_UNCHANGED)
+        settings = load_settings()
+        self.kr_path = tk.StringVar(value=str(settings.get("kr_path") or default_kr_root()))
+        self.tw_path = tk.StringVar(value=str(settings.get("tw_path") or default_tw_root()))
+        self.display_mode = tk.StringVar(value=str(settings.get("display_mode") or DISPLAY_UNCHANGED))
+        self.font_profile_values = core.available_font_profiles()
+        stored_profile = str(settings.get("font_profile") or core.FONT_PROFILE_SYSTEM)
+        if stored_profile not in self.font_profile_values:
+            stored_profile = core.FONT_PROFILE_SYSTEM
+        self.font_profile = tk.StringVar(value=FONT_PROFILE_LABELS[stored_profile])
         screen_width = self.winfo_screenwidth()
         screen_height = self.winfo_screenheight()
         self.resolution_presets = core.available_4_3_resolutions(screen_width, screen_height)
-        self.resolution_value = tk.StringVar(
-            value=core.resolution_label(core.default_4_3_resolution(screen_width, screen_height))
-        )
-        self.launch_after_apply = tk.BooleanVar(value=False)
+        default_resolution = core.resolution_label(core.default_4_3_resolution(screen_width, screen_height))
+        self.resolution_value = tk.StringVar(value=str(settings.get("resolution") or default_resolution))
+        self.launch_after_apply = tk.BooleanVar(value=bool(settings.get("launch_after_apply", False)))
         self.status_text = tk.StringVar(value="대기 중")
 
         self._build_ui()
@@ -160,6 +220,16 @@ class PatchGui(tk.Tk):
         options = ttk.LabelFrame(main, text="실행 옵션", padding=10)
         options.pack(fill=X, pady=(8, 10))
 
+        ttk.Label(options, text="In-game font").pack(side=LEFT)
+        self.font_combo = ttk.Combobox(
+            options,
+            textvariable=self.font_profile,
+            values=[FONT_PROFILE_LABELS[item] for item in self.font_profile_values],
+            state="readonly",
+            width=18,
+        )
+        self.font_combo.pack(side=LEFT, padx=(8, 16))
+
         ttk.Label(options, text="화면 모드").pack(side=LEFT)
         display = ttk.Combobox(
             options,
@@ -194,6 +264,8 @@ class PatchGui(tk.Tk):
         self.game_button.pack(side=LEFT, padx=(8, 0))
         self.config_button = ttk.Button(buttons, text="WindConfig 실행", command=self.launch_config)
         self.config_button.pack(side=LEFT, padx=(8, 0))
+        self.update_button = ttk.Button(buttons, text="런처 업데이트", command=self.update_launcher)
+        self.update_button.pack(side=LEFT, padx=(8, 0))
 
         ttk.Label(main, textvariable=self.status_text).pack(anchor="w", pady=(0, 6))
 
@@ -285,12 +357,14 @@ class PatchGui(tk.Tk):
         selected = filedialog.askdirectory(title="한국어판 폴더 선택", initialdir=initialdir)
         if selected:
             self.kr_path.set(selected)
+            self._save_current_settings()
 
     def _browse_tw(self) -> None:
         initialdir = self.tw_path.get().strip() or str(Path.home())
         selected = filedialog.askdirectory(title="Steam 대만판 폴더 선택", initialdir=initialdir)
         if selected:
             self.tw_path.set(selected)
+            self._save_current_settings()
 
     def _display_mode_arg(self) -> str | None:
         value = self.display_mode.get()
@@ -301,6 +375,27 @@ class PatchGui(tk.Tk):
         if value == DISPLAY_FULLSCREEN:
             return "fullscreen"
         return None
+
+    def _font_profile_arg(self) -> str:
+        value = self.font_profile.get()
+        if value in core.FONT_PROFILE_OPTIONS:
+            return value
+        for profile, label in FONT_PROFILE_LABELS.items():
+            if value == label:
+                return profile
+        raise ValueError("Unsupported font profile")
+
+    def _save_current_settings(self) -> None:
+        save_settings(
+            {
+                "kr_path": self.kr_path.get().strip(),
+                "tw_path": self.tw_path.get().strip(),
+                "display_mode": self.display_mode.get(),
+                "resolution": self.resolution_value.get(),
+                "font_profile": self._font_profile_arg(),
+                "launch_after_apply": self.launch_after_apply.get(),
+            }
+        )
 
     def _sync_resolution_state(self) -> None:
         state = "readonly" if self.display_mode.get() == DISPLAY_WINDOWED else "disabled"
@@ -354,6 +449,7 @@ class PatchGui(tk.Tk):
             display_mode=self._display_mode_arg(),
             width=width,
             height=height,
+            font_profile=self._font_profile_arg(),
             no_apply=no_apply,
         )
 
@@ -361,7 +457,9 @@ class PatchGui(tk.Tk):
         # Tk variables must be read on the main thread; workers only receive
         # the prebuilt argparse namespace.
         try:
-            return self._args(**kwargs)
+            args = self._args(**kwargs)
+            self._save_current_settings()
+            return args
         except ValueError as exc:
             messagebox.showerror(APP_TITLE, str(exc))
             return None
@@ -374,6 +472,7 @@ class PatchGui(tk.Tk):
             self.restore_button,
             self.game_button,
             self.config_button,
+            self.update_button,
         ]:
             button.configure(state=state)
 
@@ -479,6 +578,18 @@ class PatchGui(tk.Tk):
         if args is None:
             return
         self._run_worker("WindConfig 실행 중", lambda: core.launch(args))
+
+    def update_launcher(self) -> None:
+        bundle_root = launcher_bundle_root()
+        if not (bundle_root / VERSION_FILE_NAME).is_file():
+            messagebox.showerror(APP_TITLE, "배포 패키지의 launcher_version.json을 찾지 못했습니다.")
+            return
+        try:
+            subprocess.Popen(updater_command(bundle_root, os.getpid()), cwd=str(bundle_root))
+        except OSError as exc:
+            messagebox.showerror(APP_TITLE, str(exc))
+            return
+        self.destroy()
 
 
 def main(argv: list[str] | None = None) -> int:

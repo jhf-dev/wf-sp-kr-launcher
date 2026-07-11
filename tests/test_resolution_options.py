@@ -27,6 +27,37 @@ def write_target_layout(root: Path) -> None:
 
 
 class ResolutionOptionsTest(unittest.TestCase):
+    def test_font_profiles_render_a_runtime_config_without_display_options(self) -> None:
+        config = core.normalize_display_config(None, None, None, "system")
+
+        self.assertEqual("fullscreen", config["mode"])
+        self.assertEqual((640, 480), (config["width"], config["height"]))
+        self.assertEqual("system", config["font_profile"])
+        self.assertIn("font_profile=system", core.render_ddraw_config(config).decode("ascii"))
+
+    def test_font_profile_rejects_unknown_value(self) -> None:
+        with self.assertRaises(SystemExit):
+            core.normalize_display_config(None, None, None, "unknown")
+
+    def test_directdraw_proxy_maps_standard_speed_keys_to_numpad_controls(self) -> None:
+        source = (ROOT / "tooling" / "runtime" / "ddraw_proxy.cpp").read_text(encoding="utf-8")
+        self.assertIn("VK_OEM_PLUS", source)
+        self.assertIn("VK_ADD", source)
+        self.assertIn("VK_OEM_MINUS", source)
+        self.assertIn("VK_SUBTRACT", source)
+
+    def test_available_profiles_hide_missing_system_fonts(self) -> None:
+        with mock.patch.object(core, "system_font_available", return_value=False):
+            self.assertEqual([core.FONT_PROFILE_SYSTEM], core.available_font_profiles())
+
+    def test_directdraw_proxy_contains_font_hook_and_font_scale(self) -> None:
+        source = (ROOT / "tooling" / "runtime" / "ddraw_proxy.cpp").read_text(encoding="utf-8")
+
+        self.assertIn("CreateFontA", source)
+        self.assertNotIn("AddFontResourceExA", source)
+        self.assertIn("MulDiv(n_height, 3, 4)", source)
+        self.assertNotIn("SetProcessDPIAware", source)
+
     def test_directdraw_proxy_keeps_scaled_windows_non_topmost(self) -> None:
         source = (ROOT / "tooling" / "runtime" / "ddraw_proxy.cpp").read_text(encoding="utf-8")
 

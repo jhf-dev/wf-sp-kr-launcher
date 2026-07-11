@@ -84,8 +84,16 @@ WIND_DLL_TEXTOUT_LENGTH_PATCHES = [
 
 WINDSP_REGISTRY_KEY = "WindSP"
 
-DDRAW_RUNTIME_FILES = ("ddraw.dll", "wftsp_ddraw.ini")
 DDRAW_CONFIG_SECTION = "wftsp_ddraw"
+FONT_PROFILE_SYSTEM = "system"
+FONT_PROFILE_GULIM = "gulim"
+FONT_PROFILE_DOTUM = "dotum"
+FONT_PROFILE_OPTIONS = (
+    FONT_PROFILE_SYSTEM,
+    FONT_PROFILE_GULIM,
+    FONT_PROFILE_DOTUM,
+)
+DDRAW_RUNTIME_FILES = ("ddraw.dll", "wftsp_ddraw.ini")
 STANDARD_4_3_RESOLUTIONS: tuple[tuple[int, int], ...] = (
     (640, 480),
     (800, 600),
@@ -166,7 +174,14 @@ def repo_root_from_script() -> Path:
 
 
 def ddraw_payload_path() -> Path:
-    return repo_root_from_script() / "payload" / "ddraw.dll"
+    root = repo_root_from_script()
+    candidates = [root / "payload" / "ddraw.dll"]
+    if getattr(sys, "frozen", False):
+        candidates.append(root.parent / "payload" / "ddraw.dll")
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return candidates[0]
 
 
 def resolve_paths(args: argparse.Namespace) -> tuple[Path, Path]:
@@ -544,9 +559,13 @@ def normalize_display_config(
     display_mode: str | None,
     width: int | None,
     height: int | None,
+    font_profile: str | None = None,
 ) -> dict[str, int | str] | None:
-    if display_mode is None and width is None and height is None:
+    normalized_font_profile = normalize_font_profile(font_profile)
+    if display_mode is None and width is None and height is None and normalized_font_profile is None:
         return None
+    if display_mode is None and normalized_font_profile is not None:
+        display_mode = "fullscreen"
     if display_mode is None:
         raise SystemExit("--width/--height require --display-mode")
     if display_mode not in {"fullscreen", "windowed", "borderless"}:
@@ -565,7 +584,46 @@ def normalize_display_config(
         "input_fix": 1,
         "audio_focus_fix": 1,
         "inactive_window_spoof": 1,
+        "font_profile": normalized_font_profile or FONT_PROFILE_SYSTEM,
     }
+
+
+def system_font_available(face_name: str) -> bool:
+    if winreg is None:
+        return False
+    target = face_name.casefold()
+    for hive in (winreg.HKEY_CURRENT_USER, winreg.HKEY_LOCAL_MACHINE):
+        try:
+            with winreg.OpenKey(hive, r"SOFTWARE\Microsoft\Windows NT\CurrentVersion\Fonts") as key:
+                count = winreg.QueryInfoKey(key)[1]
+                for index in range(count):
+                    name, _value, _kind = winreg.EnumValue(key, index)
+                    if target in name.casefold():
+                        return True
+        except OSError:
+            continue
+    return False
+
+
+def normalize_font_profile(profile: str | None) -> str | None:
+    if profile is None:
+        return None
+    if profile not in FONT_PROFILE_OPTIONS:
+        raise SystemExit(f"unsupported font profile: {profile}")
+    if profile == FONT_PROFILE_GULIM and not system_font_available("Gulim"):
+        raise SystemExit("Gulim is not installed on this system")
+    if profile == FONT_PROFILE_DOTUM and not system_font_available("Dotum"):
+        raise SystemExit("Dotum is not installed on this system")
+    return profile
+
+
+def available_font_profiles() -> list[str]:
+    profiles = [FONT_PROFILE_SYSTEM]
+    if system_font_available("Gulim"):
+        profiles.append(FONT_PROFILE_GULIM)
+    if system_font_available("Dotum"):
+        profiles.append(FONT_PROFILE_DOTUM)
+    return profiles
 
 
 def current_monitor_size() -> tuple[int, int]:
@@ -631,6 +689,7 @@ def render_ddraw_config(config: dict[str, int | str]) -> bytes:
         f"input_fix={config['input_fix']}",
         f"audio_focus_fix={config['audio_focus_fix']}",
         f"inactive_window_spoof={config['inactive_window_spoof']}",
+        f"font_profile={config.get('font_profile', FONT_PROFILE_SYSTEM)}",
         "",
     ]
     return "\n".join(lines).encode("ascii")
@@ -650,7 +709,7 @@ def read_ddraw_config(path: Path) -> dict[str, int | str] | None:
                 values[key] = int(value)
             except ValueError:
                 values[key] = value
-        elif key == "mode":
+        elif key in {"mode", "font_profile"}:
             values[key] = value
     return values
 
@@ -699,8 +758,9 @@ def install_display_runtime(
     width: int | None,
     height: int | None,
     dry_run: bool,
+    font_profile: str | None = None,
 ) -> dict[str, object]:
-    config = normalize_display_config(display_mode, width, height)
+    config = normalize_display_config(display_mode, width, height, font_profile)
     if config is None:
         return {"changed": False, "supported": True, "reason": "no display runtime options requested"}
 
@@ -796,6 +856,7 @@ def apply_patch(args: argparse.Namespace) -> dict[str, object]:
         args.width,
         args.height,
         dry_run=args.dry_run,
+        font_profile=getattr(args, "font_profile", None),
     )
 
     report: dict[str, object] = {
@@ -964,6 +1025,7 @@ def launch_executable(args: argparse.Namespace, executable_name: str, action: st
             args.width,
             args.height,
             dry_run=args.dry_run,
+            font_profile=getattr(args, "font_profile", None),
         )
         if display_report.get("changed") and not args.dry_run:
             write_state(
@@ -1011,6 +1073,11 @@ def add_common_args(parser: argparse.ArgumentParser) -> None:
     )
     parser.add_argument("--width", type=int, help="windowed 4:3 preset width")
     parser.add_argument("--height", type=int, help="windowed 4:3 preset height")
+    parser.add_argument(
+        "--font-profile",
+        choices=FONT_PROFILE_OPTIONS,
+        help="font family profile for in-game GDI text",
+    )
     parser.add_argument("--dry-run", action="store_true", help="report changes without writing files")
 
 

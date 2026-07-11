@@ -1,0 +1,8 @@
+{
+  "version": "beta-2026-07-11-v1",
+  "repository": "jhf-dev/wf-sp-kr-launcher",
+  "asset_pattern": "WFTSP_KR_Steam_Patch_GUI_package",
+  "launcher": "WFTSP_KR_Steam_Patch_GUI.exe",
+  "updater": "WFTSP_KR_Steam_Patch_Updater.exe",
+  "published_at": "2026-07-11T00:00:00+09:00"
+}

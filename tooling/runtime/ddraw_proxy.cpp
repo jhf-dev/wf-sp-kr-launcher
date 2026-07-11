@@ -9,6 +9,7 @@
 
 struct RuntimeConfig {
     char mode[16];
+    char font_profile[16];
     LONG width;
     LONG height;
     BOOL debug;
@@ -52,10 +53,27 @@ typedef HRESULT (WINAPI *DirectDrawCreateProc)(GUID FAR *, LPDIRECTDRAW FAR *, I
 typedef BOOL (WINAPI *SetCursorPosProc)(int, int);
 typedef BOOL (WINAPI *ClipCursorProc)(const RECT *);
 typedef MCIERROR (WINAPI *MciSendStringAProc)(LPCSTR, LPSTR, UINT, HWND);
+typedef HFONT (WINAPI *CreateFontAProc)(
+    int,
+    int,
+    int,
+    int,
+    int,
+    DWORD,
+    DWORD,
+    DWORD,
+    DWORD,
+    DWORD,
+    DWORD,
+    DWORD,
+    DWORD,
+    LPCSTR
+);
 
 static SetCursorPosProc g_real_SetCursorPos = NULL;
 static ClipCursorProc g_real_ClipCursor = NULL;
 static MciSendStringAProc g_real_mciSendStringA = NULL;
+static CreateFontAProc g_real_CreateFontA = NULL;
 
 static IDirectDrawVtbl g_dd_vtbl;
 static IDirectDrawSurfaceVtbl g_surface_vtbl;
@@ -108,6 +126,7 @@ static BOOL module_file_path(const char *name, char *buffer, DWORD size) {
 static RuntimeConfig load_config() {
     RuntimeConfig config;
     lstrcpynA(config.mode, "fullscreen", sizeof(config.mode));
+    lstrcpynA(config.font_profile, "system", sizeof(config.font_profile));
     config.width = 640;
     config.height = 480;
     config.debug = FALSE;
@@ -123,6 +142,9 @@ static RuntimeConfig load_config() {
     char mode_value[16] = "";
     GetPrivateProfileStringA("wftsp_ddraw", "mode", "fullscreen", mode_value, sizeof(mode_value), ini);
     lstrcpynA(config.mode, mode_value, sizeof(config.mode));
+    char font_profile[16] = "system";
+    GetPrivateProfileStringA("wftsp_ddraw", "font_profile", "system", font_profile, sizeof(font_profile), ini);
+    lstrcpynA(config.font_profile, font_profile, sizeof(config.font_profile));
     config.width = GetPrivateProfileIntA("wftsp_ddraw", "width", config.width, ini);
     config.height = GetPrivateProfileIntA("wftsp_ddraw", "height", config.height, ini);
     config.debug = GetPrivateProfileIntA("wftsp_ddraw", "debug", 0, ini) != 0;
@@ -134,6 +156,11 @@ static RuntimeConfig load_config() {
     }
     if (config.height < 240) {
         config.height = 480;
+    }
+    if (lstrcmpiA(config.font_profile, "system") != 0 &&
+        lstrcmpiA(config.font_profile, "gulim") != 0 &&
+        lstrcmpiA(config.font_profile, "dotum") != 0) {
+        lstrcpynA(config.font_profile, "system", sizeof(config.font_profile));
     }
     return config;
 }
@@ -387,6 +414,55 @@ static MCIERROR WINAPI Hook_mciSendStringA(LPCSTR command, LPSTR return_string, 
     return g_real_mciSendStringA(actual, return_string, return_length, callback);
 }
 
+static LPCSTR configured_font_face(const RuntimeConfig &config, LPCSTR requested_face) {
+    if (lstrcmpiA(config.font_profile, "gulim") == 0) {
+        return "Gulim";
+    }
+    if (lstrcmpiA(config.font_profile, "dotum") == 0) {
+        return "Dotum";
+    }
+    return requested_face;
+}
+
+static HFONT WINAPI Hook_CreateFontA(
+    int n_height,
+    int n_width,
+    int n_escapement,
+    int n_orientation,
+    int fn_weight,
+    DWORD fdw_italic,
+    DWORD fdw_underline,
+    DWORD fdw_strike_out,
+    DWORD fdw_charset,
+    DWORD fdw_output_precision,
+    DWORD fdw_clip_precision,
+    DWORD fdw_quality,
+    DWORD fdw_pitch_and_family,
+    LPCSTR requested_face
+) {
+    if (g_real_CreateFontA == NULL) {
+        return NULL;
+    }
+    // The legacy Korean client uses a visibly larger 16px-class base glyph.
+    LPCSTR selected_face = configured_font_face(g_config, requested_face);
+    return g_real_CreateFontA(
+        MulDiv(n_height, 3, 4),
+        n_width,
+        n_escapement,
+        n_orientation,
+        fn_weight,
+        fdw_italic,
+        fdw_underline,
+        fdw_strike_out,
+        fdw_charset,
+        fdw_output_precision,
+        fdw_clip_precision,
+        fdw_quality,
+        fdw_pitch_and_family,
+        selected_face
+    );
+}
+
 static BOOL patch_import(const char *dll_name, const char *func_name, void *replacement, void **original) {
     HMODULE module = GetModuleHandleA(NULL);
     if (module == NULL) {
@@ -440,7 +516,15 @@ static BOOL patch_import(const char *dll_name, const char *func_name, void *repl
 }
 
 static LRESULT CALLBACK Hook_WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPARAM lparam) {
+    WPARAM forward_wparam = wparam;
     LPARAM forward_lparam = lparam;
+    if (msg == WM_KEYDOWN || msg == WM_KEYUP) {
+        if (wparam == VK_OEM_PLUS) {
+            forward_wparam = VK_ADD;
+        } else if (wparam == VK_OEM_MINUS) {
+            forward_wparam = VK_SUBTRACT;
+        }
+    }
     if (client_mouse_message(msg)) {
         client_mouse_lparam_to_logical(hwnd, lparam, &forward_lparam);
     }
@@ -471,7 +555,7 @@ static LRESULT CALLBACK Hook_WindowProc(HWND hwnd, UINT msg, WPARAM wparam, LPAR
         }
     }
     if (g_original_wndproc != NULL) {
-        return CallWindowProcA(g_original_wndproc, hwnd, msg, wparam, forward_lparam);
+        return CallWindowProcA(g_original_wndproc, hwnd, msg, forward_wparam, forward_lparam);
     }
     return DefWindowProcA(hwnd, msg, wparam, forward_lparam);
 }
@@ -483,6 +567,7 @@ static void install_runtime_hooks() {
     patch_import("USER32.dll", "SetCursorPos", reinterpret_cast<void *>(Hook_SetCursorPos), reinterpret_cast<void **>(&g_real_SetCursorPos));
     patch_import("USER32.dll", "ClipCursor", reinterpret_cast<void *>(Hook_ClipCursor), reinterpret_cast<void **>(&g_real_ClipCursor));
     patch_import("WINMM.dll", "mciSendStringA", reinterpret_cast<void *>(Hook_mciSendStringA), reinterpret_cast<void **>(&g_real_mciSendStringA));
+    patch_import("GDI32.dll", "CreateFontA", reinterpret_cast<void *>(Hook_CreateFontA), reinterpret_cast<void **>(&g_real_CreateFontA));
     g_hooks_installed = TRUE;
 }
 
