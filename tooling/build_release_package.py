@@ -53,9 +53,16 @@ def main() -> int:
     digest = hashlib.sha256(archive.read_bytes()).hexdigest()
     checksum = archive.with_suffix(archive.suffix + ".sha256")
     checksum.write_text(f"{digest}  {archive.name}\n", encoding="ascii")
+    updater = DIST / "WFTSP_KR_Steam_Patch_Updater.exe"
+    updater_digest = hashlib.sha256(updater.read_bytes()).hexdigest()
+    updater_checksum = updater.with_suffix(updater.suffix + ".sha256")
+    updater_checksum.write_text(f"{updater_digest}  {updater.name}\n", encoding="ascii")
     print(archive)
     print(checksum)
     print(digest)
+    print(updater)
+    print(updater_checksum)
+    print(updater_digest)
     return 0
 
 

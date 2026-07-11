@@ -9,6 +9,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import tempfile
 import time
 import urllib.request
@@ -16,7 +17,8 @@ import zipfile
 from dataclasses import dataclass
 from datetime import datetime
 from pathlib import Path
-from tkinter import messagebox
+import tkinter as tk
+from tkinter import filedialog, messagebox
 
 APP_TITLE = "Wind Fantasy SP 한국어 패치 런처 업데이트"
 VERSION_FILE = "launcher_version.json"
@@ -51,6 +53,45 @@ def load_version_info(path: Path) -> VersionInfo:
         launcher=str(data.get("launcher") or DEFAULT_LAUNCHER).strip(),
         updater=str(data.get("updater") or "WFTSP_KR_Steam_Patch_Updater.exe").strip(),
     )
+
+
+def load_local_version(bundle_root: Path) -> VersionInfo | None:
+    try:
+        return load_version_info(bundle_root / VERSION_FILE)
+    except (OSError, ValueError, json.JSONDecodeError):
+        return None
+
+
+def default_version_info() -> VersionInfo:
+    return VersionInfo(
+        version="",
+        repository=DEFAULT_REPOSITORY,
+        asset_pattern=DEFAULT_ASSET_PATTERN,
+        launcher=DEFAULT_LAUNCHER,
+        updater="WFTSP_KR_Steam_Patch_Updater.exe",
+    )
+
+
+def is_bundle_target(path: Path) -> bool:
+    return any((path / name).is_file() for name in (
+        VERSION_FILE, DEFAULT_LAUNCHER, "WFTSP_KR_Steam_Patch_GUI.cmd",
+    ))
+
+
+def choose_bundle_root(initial: Path) -> Path | None:
+    if is_bundle_target(initial):
+        return initial
+    root = tk.Tk()
+    root.withdraw()
+    try:
+        selected = filedialog.askdirectory(
+            title="기존 WFTSP 한국어 패치 런처 폴더 선택",
+            initialdir=str(initial),
+            mustexist=True,
+        )
+    finally:
+        root.destroy()
+    return Path(selected).resolve() if selected else None
 
 
 def fetch_latest_release(repository: str) -> dict[str, object]:
@@ -150,8 +191,8 @@ def iter_managed_sources(candidate: Path):
 
 
 def apply_candidate(candidate: Path, bundle_root: Path) -> Path:
-    if not (bundle_root / VERSION_FILE).is_file():
-        raise RuntimeError("배포 패키지 루트가 아닙니다. launcher_version.json 옆에서 실행해 주세요.")
+    if not is_bundle_target(bundle_root):
+        raise RuntimeError("기존 WFTSP 한국어 패치 런처 폴더를 확인하지 못했습니다.")
     backup_root = bundle_root / "_launcher_updates" / "backup" / datetime.now().strftime("%Y%m%d_%H%M%S")
     for source, relative in iter_managed_sources(candidate):
         target = bundle_root / relative
@@ -181,13 +222,14 @@ def restart_launcher(bundle_root: Path, launcher: str) -> None:
         subprocess.Popen([str(launcher_path)], cwd=str(bundle_root))
 
 
-def run_update(bundle_root: Path, parent_pid: int) -> str:
-    local = load_version_info(bundle_root / VERSION_FILE)
+def run_update(bundle_root: Path, parent_pid: int, *, force_latest: bool = False) -> str:
+    detected = load_local_version(bundle_root)
+    local = detected or default_version_info()
     release = fetch_latest_release(local.repository)
     remote_tag = str(release.get("tag_name") or "").strip()
     if not remote_tag:
         raise RuntimeError("최신 릴리즈 태그를 확인하지 못했습니다.")
-    if not is_remote_newer(local.version, remote_tag):
+    if detected is not None and not force_latest and not is_remote_newer(local.version, remote_tag):
         return f"이미 최신 버전입니다.\n현재: {local.version}"
     asset = select_release_asset(release, local.asset_pattern)
     with tempfile.TemporaryDirectory(prefix="wftsp_update_") as temp_dir:
@@ -200,7 +242,28 @@ def run_update(bundle_root: Path, parent_pid: int) -> str:
         remote = validate_candidate(candidate, remote_tag)
         wait_for_parent(parent_pid)
         backup = apply_candidate(candidate, bundle_root)
-    return f"런처 업데이트를 적용했습니다.\n이전: {local.version}\n현재: {remote.version}\n백업: {backup}"
+    previous = local.version or "(버전 식별 불가)"
+    return f"런처 업데이트를 적용했습니다.\n이전: {previous}\n현재: {remote.version}\n백업: {backup}"
+
+
+def relaunch_detached(bundle_root: Path, args: argparse.Namespace) -> bool:
+    if not getattr(sys, "frozen", False) or args.detached:
+        return False
+    executable = Path(sys.executable).resolve()
+    if executable.parent != bundle_root.resolve():
+        return False
+    temp_root = Path(tempfile.mkdtemp(prefix="wftsp_bootstrap_updater_"))
+    detached = temp_root / executable.name
+    shutil.copy2(executable, detached)
+    command = [str(detached), "--bundle-root", str(bundle_root), "--detached"]
+    if args.parent_pid:
+        command.extend(["--parent-pid", str(args.parent_pid)])
+    if args.restart:
+        command.append("--restart")
+    if args.force_latest:
+        command.append("--force-latest")
+    subprocess.Popen(command, cwd=str(bundle_root))
+    return True
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -208,19 +271,29 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--bundle-root", type=Path)
     parser.add_argument("--parent-pid", type=int, default=0)
     parser.add_argument("--restart", action="store_true")
+    parser.add_argument("--force-latest", action="store_true")
+    parser.add_argument("--detached", action="store_true", help=argparse.SUPPRESS)
     parser.add_argument("--self-test", action="store_true")
     args = parser.parse_args(argv)
     if args.self_test:
         if release_tag_key("beta-2026-07-11-v1") is None:
             raise SystemExit("release tag parser failed")
         return 0
-    if args.bundle_root is None:
-        parser.error("--bundle-root is required")
-    bundle_root = args.bundle_root.resolve()
+    initial_root = args.bundle_root.resolve() if args.bundle_root else Path(sys.executable).resolve().parent
+    bundle_root = choose_bundle_root(initial_root)
+    if bundle_root is None:
+        return 0
+    if relaunch_detached(bundle_root, args):
+        return 0
     launcher = DEFAULT_LAUNCHER
     try:
-        launcher = load_version_info(bundle_root / VERSION_FILE).launcher
-        messagebox.showinfo(APP_TITLE, run_update(bundle_root, args.parent_pid))
+        local = load_local_version(bundle_root)
+        if local is not None:
+            launcher = local.launcher
+        messagebox.showinfo(
+            APP_TITLE,
+            run_update(bundle_root, args.parent_pid, force_latest=args.force_latest),
+        )
         result = 0
     except Exception as exc:
         messagebox.showerror(APP_TITLE, str(exc))

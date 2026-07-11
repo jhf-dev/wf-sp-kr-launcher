@@ -39,6 +39,12 @@ WFTSP_KR_Steam_Patch_GUI.exe
 - 사용자가 패키지 폴더에 추가한 파일은 삭제하지 않습니다.
 - 이전 파일은 `_launcher_updates\backup` 아래에 보관합니다.
 
+### 구버전 런처 복구
+
+릴리즈에 별도 첨부된 `WFTSP_KR_Steam_Patch_Updater.exe`는 구버전 사용자를 위한 bootstrap updater로도 동작합니다. 기존 런처 폴더에 넣고 실행하거나, 표시되는 폴더 선택 창에서 기존 런처 폴더를 지정하면 됩니다.
+
+`launcher_version.json`이 없거나 손상되어 현재 버전을 식별하지 못하는 경우에는 버전 비교를 생략하고 최신 안정 릴리즈를 반드시 다운로드하여 검증한 뒤 덮어씁니다. 정상적으로 버전을 식별한 경우에는 최신 버전보다 오래된 경우에만 갱신합니다.
+
 ## 사용 방법
 
 1. `WFTSP_KR_Steam_Patch_GUI.exe`를 실행합니다.

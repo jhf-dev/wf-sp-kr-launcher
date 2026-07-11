@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import zipfile
 from pathlib import Path
+from unittest import mock
 
 ROOT = Path(__file__).resolve().parents[1]
 TOOLING = ROOT / "tooling"
@@ -28,6 +29,12 @@ def write_version(root: Path, version: str = "v1") -> None:
 
 
 class ReleaseUpdaterTest(unittest.TestCase):
+    def test_invalid_local_version_is_treated_as_unidentified(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            root = Path(temp_dir)
+            (root / updater.VERSION_FILE).write_text("not-json", encoding="utf-8")
+            self.assertIsNone(updater.load_local_version(root))
+
     def test_date_release_tags_do_not_allow_downgrade(self) -> None:
         self.assertTrue(updater.is_remote_newer("beta-2026-05-22-v1", "beta-2026-07-11-v1"))
         self.assertFalse(updater.is_remote_newer("beta-2026-07-11-v1", "beta-2026-05-22-v1"))
@@ -74,6 +81,45 @@ class ReleaseUpdaterTest(unittest.TestCase):
             self.assertEqual(b"new", (bundle / updater.DEFAULT_LAUNCHER).read_bytes())
             self.assertEqual(b"old", (backup / updater.DEFAULT_LAUNCHER).read_bytes())
             self.assertEqual("keep", (bundle / "user-note.txt").read_text(encoding="utf-8"))
+
+    def test_apply_candidate_accepts_legacy_launcher_without_version_file(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp = Path(temp_dir)
+            bundle = temp / "bundle"
+            candidate = temp / "candidate"
+            bundle.mkdir()
+            candidate.mkdir()
+            (bundle / updater.DEFAULT_LAUNCHER).write_bytes(b"old")
+            write_version(candidate, "beta-2026-07-11-v2")
+            (candidate / updater.DEFAULT_LAUNCHER).write_bytes(b"new")
+            updater.apply_candidate(candidate, bundle)
+            self.assertEqual(b"new", (bundle / updater.DEFAULT_LAUNCHER).read_bytes())
+            self.assertTrue((bundle / updater.VERSION_FILE).is_file())
+
+    def test_unidentified_version_always_downloads_latest_release(self) -> None:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            bundle = Path(temp_dir)
+            (bundle / updater.DEFAULT_LAUNCHER).write_bytes(b"legacy")
+            release = {
+                "tag_name": "beta-2026-07-11-v2",
+                "assets": [{
+                    "name": "WFTSP_KR_Steam_Patch_GUI_package-v2.zip",
+                    "browser_download_url": "https://example.test/v2.zip",
+                }],
+            }
+            remote = updater.VersionInfo(
+                "beta-2026-07-11-v2", updater.DEFAULT_REPOSITORY,
+                updater.DEFAULT_ASSET_PATTERN, updater.DEFAULT_LAUNCHER,
+                "WFTSP_KR_Steam_Patch_Updater.exe",
+            )
+            with mock.patch.object(updater, "fetch_latest_release", return_value=release), \
+                    mock.patch.object(updater, "download_asset") as download, \
+                    mock.patch.object(updater, "safe_extract_zip"), \
+                    mock.patch.object(updater, "validate_candidate", return_value=remote), \
+                    mock.patch.object(updater, "apply_candidate", return_value=bundle / "backup"):
+                message = updater.run_update(bundle, 0)
+            download.assert_called_once()
+            self.assertIn("버전 식별 불가", message)
 
     def test_source_launcher_builds_python_updater_command(self) -> None:
         with tempfile.TemporaryDirectory() as temp_dir:
